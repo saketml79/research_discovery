@@ -255,7 +255,7 @@ resources:
         Claim review workstation. The review queue is the boundary between
         extracted candidate knowledge and what the agent may assert; this app is
         what makes that boundary usable.
-      source_code_path: ../app
+      source_code_path: ..
       resources:
         - name: sql_warehouse
           sql_warehouse:
