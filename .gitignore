@@ -10,3 +10,11 @@ dist/
 *.egg-info/
 .databricks/
 .venv/
+pipeline_run*.txt
+query.json
+verify*.json
+cleanup*.json
+c1.json
+c2.json
+v.json
+v2.json
