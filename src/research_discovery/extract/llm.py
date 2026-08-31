@@ -178,6 +178,9 @@ def _parse_json(raw: str) -> Any:
 _KEY_ALIASES = {"claim": "claim_text"}
 _SCOPE_KEYS = ("task", "method", "metric", "benchmark", "condition_text")
 _ITEM_LIKE_KEYS = {"claim_text", "claim", "claim_type", "confidence", "scope"}
+_CLAIM_TEXT_MIN_LENGTH = CLAIM_RESPONSE_SCHEMA["properties"]["claims"]["items"]["properties"][
+    "claim_text"
+]["minLength"]
 
 
 def _normalize_payload(payload: Any) -> dict[str, Any]:
@@ -211,10 +214,13 @@ def _normalize_payload(payload: Any) -> dict[str, Any]:
         for alias, canonical in _KEY_ALIASES.items():
             if alias in item and canonical not in item:
                 item[canonical] = item.pop(alias)
+        claim_text = item.get("claim_text")
         # A model sometimes answers "no claim here" as an object with
-        # claim_text left null/empty rather than an empty claims array; that
-        # is a real, valid answer, not a formatting error - drop it silently.
-        if not item.get("claim_text"):
+        # claim_text left null/empty (or, over a non-prose passage like a
+        # repo file listing, a bare filename) rather than an empty claims
+        # array; neither is a real claim, so drop it silently rather than
+        # letting the minLength check turn a non-answer into a hard failure.
+        if not claim_text or len(str(claim_text).strip()) < _CLAIM_TEXT_MIN_LENGTH:
             continue
         normalized_claims.append(item)
     return {"claims": normalized_claims}

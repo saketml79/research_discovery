@@ -295,6 +295,18 @@ class TestLlmExtractor(unittest.TestCase):
         payload = '{"claims": []}\n{"claims": []}'
         self.assertEqual(list(self._extractor(payload).extract(chunk())), [])
 
+    def test_drops_claim_text_shorter_than_schema_minimum(self):
+        payload = {
+            "claims": [
+                {
+                    "claim_text": "README.md",
+                    "claim_type": "METHOD_DESCRIPTION",
+                    "confidence": 1.0,
+                }
+            ]
+        }
+        self.assertEqual(list(self._extractor(payload).extract(chunk())), [])
+
     def test_batch_failure_is_isolated(self):
         client = StubChat("not json")
         extractor = LlmClaimExtractor(client, model_name="m", sleep=lambda _: None)
