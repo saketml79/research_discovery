@@ -51,7 +51,7 @@ class Config:
     volume: str = DEFAULT_VOLUME
     parser: str = "pypdf"
     extractor: str = "llm"
-    extraction_model: str = "databricks-claude-sonnet-4-5"
+    extraction_model: str = "databricks-meta-llama-3-1-8b-instruct"
     ai_search_endpoint: str = ""
     max_chunk_chars: int = 2400
     min_chunk_chars: int = 200
@@ -99,7 +99,7 @@ class Config:
             volume=env.get("RD_VOLUME", DEFAULT_VOLUME),
             parser=env.get("RD_PARSER", "pypdf"),
             extractor=env.get("RD_EXTRACTOR", "llm"),
-            extraction_model=env.get("RD_EXTRACTION_MODEL", "databricks-claude-sonnet-4-5"),
+            extraction_model=env.get("RD_EXTRACTION_MODEL", "databricks-meta-llama-3-1-8b-instruct"),
             ai_search_endpoint=env.get("RD_AI_SEARCH_ENDPOINT", ""),
             dry_run=_as_bool(env.get("RD_DRY_RUN", "false")),
         )

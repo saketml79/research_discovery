@@ -196,6 +196,9 @@ resources:
             client: "3"
             dependencies:
               - ../dist/*.whl
+              - pypdf>=4.2
+              - databricks-sdk>=0.30
+              - jsonschema>=4.21
 
     research_discovery_deploy_agent:
       name: "[${bundle.target}] Research Discovery :: deploy Genie Agent"

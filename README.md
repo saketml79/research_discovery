@@ -411,7 +411,7 @@ directly rather than through a deployment.
 | `volume` | `raw_sources` | Raw document storage (licence-permitting) |
 | `parser` | `pypdf` | `pypdf`, `docling`, `ai_parse_document`, `html`, `plaintext` |
 | `extractor` | `llm` | `llm`, `ai_extract`, `heuristic` |
-| `extraction_model` | `databricks-claude-sonnet-4-5` | Serving endpoint for extraction |
+| `extraction_model` | `databricks-meta-llama-3-1-8b-instruct` | Serving endpoint for extraction (Free Edition workspaces cannot access Claude/GPT pay-per-token endpoints; this model is confirmed available) |
 | `ai_search_endpoint` | *(empty)* | Vector Search endpoint; empty disables indexing |
 | `warehouse_name` | `Serverless Starter Warehouse` | Resolved into `warehouse_id` |
 

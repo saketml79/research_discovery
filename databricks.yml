@@ -28,8 +28,12 @@ variables:
     description: Claim extractor adapter - llm | ai_extract | heuristic.
     default: llm
   extraction_model:
-    description: Foundation-model serving endpoint used for claim extraction.
-    default: databricks-claude-sonnet-4-5
+    description: >-
+      Foundation-model serving endpoint used for claim extraction. On Databricks
+      Free Edition, Claude/GPT pay-per-token endpoints 404 (not entitled); use a
+      model confirmed available on this workspace, e.g. databricks-meta-llama-3-1-8b-instruct
+      or databricks-gpt-oss-20b.
+    default: databricks-meta-llama-3-1-8b-instruct
   ai_search_endpoint:
     description: AI Search / Vector Search endpoint name (optional).
     default: ""
