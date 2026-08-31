@@ -19,6 +19,9 @@ from .base import CandidateClaim, ClaimExtractor, ExtractionError, ExtractorUnav
 from .prompts import CLAIM_RESPONSE_SCHEMA, EXTRACTION_PROMPT_VERSION, build_messages
 
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
+#: A backslash not followed by a valid JSON escape character - i.e. one that
+#: makes the JSON invalid rather than encode an intentional escape.
+_INVALID_ESCAPE = re.compile(r'\\(?!["\\/bfnrtu])')
 _MAX_ATTEMPTS = 3
 _BASE_BACKOFF_SECONDS = 0.5
 
@@ -165,14 +168,31 @@ def _parse_json(raw: str) -> Any:
         value, _ = decoder.raw_decode(text)
         return value
     except json.JSONDecodeError:
-        match = _JSON_BLOCK.search(text)
-        if not match:
-            raise ExtractionError(f"model response was not JSON: {text[:200]!r}") from None
-        try:
-            value, _ = decoder.raw_decode(match.group(0))
-            return value
-        except json.JSONDecodeError as exc:
-            raise ExtractionError(f"model response was not valid JSON: {exc}") from exc
+        pass
+    # A model occasionally writes a bare backslash inside a string (LaTeX like
+    # "\%", a Windows path, an escaped quote it didn't actually need) - each of
+    # these is invalid JSON on its own, but a real, well-formed answer either
+    # side of it. Doubling any backslash not already starting a valid escape
+    # turns it into a literal backslash character instead of failing the parse.
+    repaired = _INVALID_ESCAPE.sub(r"\\\\", text)
+    try:
+        value, _ = decoder.raw_decode(repaired)
+        return value
+    except json.JSONDecodeError:
+        pass
+    match = _JSON_BLOCK.search(text)
+    if not match:
+        raise ExtractionError(f"model response was not JSON: {text[:200]!r}") from None
+    try:
+        value, _ = decoder.raw_decode(match.group(0))
+        return value
+    except json.JSONDecodeError:
+        pass
+    try:
+        value, _ = decoder.raw_decode(_INVALID_ESCAPE.sub(r"\\\\", match.group(0)))
+        return value
+    except json.JSONDecodeError as exc:
+        raise ExtractionError(f"model response was not valid JSON: {exc}") from exc
 
 
 _KEY_ALIASES = {"claim": "claim_text"}

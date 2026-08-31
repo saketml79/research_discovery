@@ -196,6 +196,16 @@ class TestLlmExtractor(unittest.TestCase):
         payload = '```json\n{"claims": []}\n```'
         self.assertEqual(list(self._extractor(payload).extract(chunk())), [])
 
+    def test_tolerates_invalid_backslash_escape(self):
+        # A raw Windows-style path / LaTeX-like "\%" is invalid JSON on its
+        # own but should be repaired rather than failing the whole response.
+        payload = (
+            '{"claims": [{"claim_text": "Cost drops by 40\\%, see C:\\Users\\x.", '
+            '"claim_type": "PERFORMANCE", "confidence": 0.8}]}'
+        )
+        candidates = self._extractor(payload).extract(chunk())
+        self.assertEqual(len(candidates), 1)
+
     def test_non_json_response_raises(self):
         with self.assertRaises(ExtractionError):
             self._extractor("I could not find any claims.").extract(chunk())

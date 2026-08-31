@@ -671,13 +671,16 @@ def render_genie_panel() -> None:
 
     history: list[dict[str, str]] = st.session_state.setdefault("genie_history", [])
     pending = st.session_state.pop("genie_pending_question", None)
+    busy = st.session_state.get("genie_busy", False)
 
     with st.container(border=True):
         if not history:
             st.caption("Try asking:")
             cols = st.columns(2)
             for index, sample in enumerate(SAMPLE_QUESTIONS):
-                if cols[index % 2].button(sample, key=f"sample:{sample}", use_container_width=True):
+                if cols[index % 2].button(
+                    sample, key=f"sample:{sample}", use_container_width=True, disabled=busy
+                ):
                     pending = sample
         else:
             for turn in history:
@@ -688,28 +691,41 @@ def render_genie_panel() -> None:
             input_cols = st.columns([5, 1])
             question = input_cols[0].text_input(
                 "Ask a question", label_visibility="collapsed",
-                placeholder="Ask a question about the reviewed corpus",
+                placeholder="Ask a question about the reviewed corpus", disabled=busy,
             )
-            asked = input_cols[1].form_submit_button("Ask", use_container_width=True)
+            asked = input_cols[1].form_submit_button("Ask", use_container_width=True, disabled=busy)
 
-    if pending or (asked and question):
-        question = pending or question
-        history.append({"role": "user", "content": question})
-        with st.spinner("Genie is thinking..."):
-            turn = client.ask(question, conversation_id=st.session_state.get("genie_conversation_id"))
-        if turn.conversation_id:
-            st.session_state["genie_conversation_id"] = turn.conversation_id
-        if turn.error:
-            answer = f"Genie could not answer: {turn.error}"
-        else:
-            answer = turn.text or "(no answer text returned)"
-            if turn.queries:
-                answer += "\n\n---\n" + "\n".join(f"`{q}`" for q in turn.queries)
-        history.append({"role": "assistant", "content": answer})
-        st.rerun()
+        if pending or (asked and question and not busy):
+            question = pending or question
+            history.append({"role": "user", "content": question})
+            with st.chat_message("user"):
+                st.markdown(question)
+            st.session_state["genie_busy"] = True
+            try:
+                with st.spinner("Genie is thinking..."):
+                    turn = client.ask(
+                        question, conversation_id=st.session_state.get("genie_conversation_id")
+                    )
+            except Exception as exc:  # noqa: BLE001 - never crash the whole page over one turn
+                logger.exception("genie ask failed")
+                answer = f"Genie could not answer: {exc}"
+                turn = None
+            else:
+                if turn.conversation_id:
+                    st.session_state["genie_conversation_id"] = turn.conversation_id
+                answer = (
+                    f"Genie could not answer: {turn.error}"
+                    if turn.error
+                    else (turn.text or "(no answer text returned)")
+                )
+                if turn and not turn.error and turn.queries:
+                    answer += "\n\n---\n" + "\n".join(f"`{q}`" for q in turn.queries)
+            history.append({"role": "assistant", "content": answer})
+            st.session_state["genie_busy"] = False
+            st.rerun()
 
     cols = st.columns([1, 5])
-    if history and cols[0].button("New conversation"):
+    if history and cols[0].button("New conversation", disabled=busy):
         st.session_state["genie_history"] = []
         st.session_state.pop("genie_conversation_id", None)
         st.rerun()
