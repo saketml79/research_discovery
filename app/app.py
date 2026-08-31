@@ -27,6 +27,7 @@ from research_discovery.config import Config
 from research_discovery.models import ReviewStatus
 from research_discovery.review.queue import AMENDABLE_FIELDS, ReviewError, validate_decision
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 #: Ordered for display; the set of what may be amended comes from review.queue,
@@ -328,6 +329,7 @@ def render_sidebar(config: Config, reviewer_label: str) -> str:
                 st.caption(f"{row['source_type']} — {reviewed} reviewed / {pending} pending")
                 st.progress(share)
         except Exception as exc:  # noqa: BLE001 - sidebar must not crash the page
+            logger.exception("sidebar coverage query failed")
             st.caption(f"Coverage unavailable: {exc}")
 
         st.divider()
@@ -341,9 +343,12 @@ def render_sidebar(config: Config, reviewer_label: str) -> str:
 
 def render_connection_error(exc: Exception) -> None:
     """A calm, actionable error instead of an endless default spinner."""
+    logger.exception("connection/query failed")
     st.error(
-        "Couldn't reach the SQL warehouse yet. If it's been idle, a serverless "
-        "warehouse can take up to a minute to start."
+        "Couldn't reach the SQL warehouse. If it's been idle, a serverless warehouse can "
+        "take up to a minute to start. If this keeps happening right after a fresh sign-in, "
+        "try reloading once more — the very first load after your session starts sometimes "
+        "races the authorization handshake."
     )
     with st.expander("Details"):
         st.code(str(exc))
