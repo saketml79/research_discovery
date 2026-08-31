@@ -142,7 +142,7 @@ resources:
               - --schema=${var.schema}
               - --volume=${var.volume}
               - --parser=${var.parser}
-              - --seed-path=../seeds/sources.csv
+              - --seed-path=${workspace.file_path}/seeds/sources.csv
 
         - task_key: extract
           depends_on: [{ task_key: ingest }, { task_key: volume_ingest }]
