@@ -7,3 +7,7 @@ env:
     value: "research_discovery"
   - name: DATABRICKS_WAREHOUSE_ID
     valueFrom: sql_warehouse
+  # Update this if the Genie Agent is ever deleted and redeployed under a new
+  # space (its id is assigned by Databricks and isn't stable across a rebuild).
+  - name: RD_GENIE_SPACE_ID
+    value: "01f1a57a9db8162d959506955b973997"

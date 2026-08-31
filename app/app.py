@@ -37,9 +37,14 @@ DISPLAY_FIELDS = ("task", "method", "metric", "benchmark", "condition_text", "me
 #: Colour + label for each queue priority. Centralised so a new priority value
 #: only needs one new line, not a scattered set of if/else blocks.
 PRIORITY_BADGE: dict[str, str] = {
-    "HIGH": "🔴 HIGH",
-    "NORMAL": "🟡 NORMAL",
-    "LOW": "⚪ LOW",
+    "HIGH": "HIGH",
+    "NORMAL": "NORMAL",
+    "LOW": "LOW",
+}
+PRIORITY_CSS_CLASS: dict[str, str] = {
+    "HIGH": "rd-badge-high",
+    "NORMAL": "rd-badge-normal",
+    "LOW": "rd-badge-low",
 }
 
 
@@ -110,6 +115,15 @@ def load_config() -> Config:
         catalog=os.environ.get("RD_CATALOG", "main"),
         schema=os.environ.get("RD_SCHEMA", "research_discovery"),
     )
+
+
+def genie_space_url() -> str | None:
+    """Direct link to the deployed Genie Agent's chat UI, if configured."""
+    space_id = os.environ.get("RD_GENIE_SPACE_ID")
+    host = os.environ.get("DATABRICKS_HOST")
+    if not space_id or not host:
+        return None
+    return f"{host.rstrip('/')}/genie/rooms/{space_id}"
 
 
 def reviewer_identity() -> str:
@@ -288,14 +302,26 @@ def record_decision(
 
 
 def inject_style() -> None:
-    """A few CSS touches so the review queue reads like a worklist, not a form dump."""
+    """Plain, dense styling: no emoji, small type, minimal colour."""
     st.markdown(
         """
         <style>
-        .block-container {padding-top: 2rem; max-width: 1200px;}
-        div[data-testid="stMetricValue"] {font-size: 1.6rem;}
-        .rd-claim-text {font-size: 1.15rem; font-weight: 600; line-height: 1.4;}
-        .rd-caption {color: #6b7280; font-size: 0.85rem;}
+        .block-container {padding-top: 1.5rem; max-width: 1100px;}
+        div[data-testid="stMetricValue"] {font-size: 1.3rem;}
+        .rd-claim-text {font-size: 1rem; font-weight: 600; line-height: 1.4;}
+        .rd-caption {color: #6b7280; font-size: 0.82rem;}
+        .rd-badge-high {color: #b91c1c; font-weight: 600;}
+        .rd-badge-normal {color: #92400e; font-weight: 600;}
+        .rd-badge-low {color: #6b7280; font-weight: 600;}
+        .rd-genie-panel {
+            border: 1px solid #d1d5db; border-radius: 6px; padding: 1.25rem 1.5rem;
+            margin-bottom: 1rem;
+        }
+        .rd-genie-link {
+            display: inline-block; padding: 0.5rem 1rem; border-radius: 4px;
+            background: #1a1a1a; color: #fff !important; text-decoration: none;
+            font-weight: 600; font-size: 0.9rem;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -305,7 +331,7 @@ def inject_style() -> None:
 def render_sidebar(config: Config, reviewer_label: str) -> str:
     """Identity, filters and a compact corpus pulse. Returns the chosen priority filter."""
     with st.sidebar:
-        st.markdown(f"#### 👤 {reviewer_label}")
+        st.markdown(f"**{reviewer_label}**")
         st.caption(f"`{config.fq_schema}`")
         st.divider()
 
@@ -314,7 +340,7 @@ def render_sidebar(config: Config, reviewer_label: str) -> str:
             help="HIGH covers low-confidence extractions, numeric claims without an "
             "excerpt, and anything missing most of its scope.",
         )
-        if st.button("🔄 Refresh", use_container_width=True):
+        if st.button("Refresh", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
 
@@ -370,6 +396,7 @@ def render_connection_error(exc: Exception) -> None:
 def render_claim(config: Config, item: dict[str, Any], reviewer: str) -> None:
     """Render one claim with its evidence and the decision controls."""
     badge = PRIORITY_BADGE.get(item["priority"], item["priority"])
+    badge_class = PRIORITY_CSS_CLASS.get(item["priority"], "rd-badge-normal")
     header_left, header_right = st.columns([5, 2])
     with header_left:
         st.markdown(f"<div class='rd-claim-text'>{item['claim_text']}</div>", unsafe_allow_html=True)
@@ -379,7 +406,7 @@ def render_claim(config: Config, item: dict[str, Any], reviewer: str) -> None:
             unsafe_allow_html=True,
         )
     with header_right:
-        st.markdown(f"**{badge}**")
+        st.markdown(f"<span class='{badge_class}'>{badge}</span>", unsafe_allow_html=True)
         confidence = item.get("extraction_confidence")
         st.metric("Extractor confidence", f"{confidence:.0%}" if confidence is not None else "n/a")
 
@@ -387,7 +414,7 @@ def render_claim(config: Config, item: dict[str, Any], reviewer: str) -> None:
     if item.get("missing_field_reason"):
         st.error(f"Missing field(s): {item['missing_field_reason']}")
 
-    with st.expander("📄 Evidence", expanded=False):
+    with st.expander("Evidence", expanded=False):
         if item.get("figure_id"):
             figure = fetch_figure(config, item["figure_id"])
             st.warning(
@@ -440,11 +467,11 @@ def render_claim(config: Config, item: dict[str, Any], reviewer: str) -> None:
 
     accept, amend, reject = st.columns(3)
     decision = None
-    if accept.button("✅ Accept", key=f"a:{item['claim_id']}", use_container_width=True):
+    if accept.button("Accept", key=f"a:{item['claim_id']}", use_container_width=True):
         decision = "ACCEPTED"
-    if amend.button("✏️ Save amendments", key=f"m:{item['claim_id']}", use_container_width=True):
+    if amend.button("Save amendments", key=f"m:{item['claim_id']}", use_container_width=True):
         decision = "AMENDED"
-    if reject.button("🚫 Reject", key=f"r:{item['claim_id']}", use_container_width=True):
+    if reject.button("Reject", key=f"r:{item['claim_id']}", use_container_width=True):
         decision = "REJECTED"
 
     if decision:
@@ -548,34 +575,33 @@ def render_open_questions_tab(config: Config) -> None:
 # ---------------------------------------------------------------------------
 
 
+def render_genie_panel() -> None:
+    """The primary surface: a direct link into the deployed Genie Agent chat."""
+    url = genie_space_url()
+    st.markdown('<div class="rd-genie-panel">', unsafe_allow_html=True)
+    st.markdown("#### Ask the research agent")
+    st.caption(
+        "The Genie Agent answers questions in plain English over the reviewed claims "
+        "corpus, with citations. It runs as its own Databricks Genie Space, not inside "
+        "this page - open it directly:"
+    )
+    if url:
+        st.markdown(f'<a class="rd-genie-link" href="{url}" target="_blank">Open Genie agent</a>', unsafe_allow_html=True)
+    else:
+        st.warning("RD_GENIE_SPACE_ID is not configured for this deployment.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def main() -> None:
     """App entry point."""
-    st.set_page_config(page_title="Research Claim Review", layout="wide", page_icon="🔬")
+    st.set_page_config(page_title="Research Discovery", layout="wide")
     inject_style()
     config = load_config()
     reviewer = reviewer_identity()
     reviewer_label = reviewer_display_name(reviewer)
 
-    st.title("🔬 Research claim review")
-    st.caption(
-        "The boundary between extracted candidate knowledge and what the Genie Agent may "
-        "assert as a finding. Nothing below is visible to the agent until it is REVIEWED."
-    )
-    with st.expander("ℹ️ What is this app?", expanded=False):
-        st.markdown(
-            "- The research pipeline **extracts candidate claims** from papers, benchmark docs "
-            "and repos — but nobody has checked them yet.\n"
-            "- **You are that check.** Every claim here needs a human decision before the Genie "
-            "Agent may ever cite it as a finding.\n"
-            "- **📋 Review queue** — claims waiting on you: accept, amend the scope fields, or "
-            "reject, with a note either way.\n"
-            "- **📊 Corpus overview** — how big the corpus is and how much of it is actually "
-            "reviewed vs. still pending.\n"
-            "- **❓ Open questions** — evidence-backed gaps the corpus has found in itself.\n"
-            "- Amending never rewrites what a source claims to have found — only the scope "
-            "fields (task, method, metric, benchmark, condition) that decide what it may be "
-            "compared against."
-        )
+    st.title("Research discovery")
+    render_genie_panel()
 
     if not reviewer:
         st.error(
@@ -586,9 +612,31 @@ def main() -> None:
 
     priority = render_sidebar(config, reviewer_label)
 
+    st.markdown("---")
+    st.markdown("#### Review workstation")
+    st.caption(
+        "Secondary to the agent above: this is where extracted candidate claims are "
+        "accepted, amended or rejected before Genie may cite them."
+    )
+    with st.expander("What is this section?", expanded=False):
+        st.markdown(
+            "- The research pipeline **extracts candidate claims** from papers, benchmark docs "
+            "and repos - but nobody has checked them yet.\n"
+            "- **You are that check.** Every claim here needs a human decision before the Genie "
+            "Agent may ever cite it as a finding.\n"
+            "- **Review queue** - claims waiting on you: accept, amend the scope fields, or "
+            "reject, with a note either way.\n"
+            "- **Corpus overview** - how big the corpus is and how much of it is actually "
+            "reviewed vs. still pending.\n"
+            "- **Open questions** - evidence-backed gaps the corpus has found in itself.\n"
+            "- Amending never rewrites what a source claims to have found - only the scope "
+            "fields (task, method, metric, benchmark, condition) that decide what it may be "
+            "compared against."
+        )
+
     try:
         tab_queue, tab_overview, tab_questions = st.tabs(
-            ["📋 Review queue", "📊 Corpus overview", "❓ Open questions"]
+            ["Review queue", "Corpus overview", "Open questions"]
         )
         with tab_queue:
             render_queue_tab(config, priority, reviewer)
