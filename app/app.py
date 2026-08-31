@@ -49,16 +49,24 @@ PRIORITY_BADGE: dict[str, str] = {
 
 @st.cache_resource(show_spinner="Connecting to the SQL warehouse (a cold start can take up to a minute)…")
 def get_connection() -> Any:
-    """Open a SQL warehouse connection using the app's service principal."""
-    from databricks import sql  # noqa: PLC0415
+    """Open a SQL warehouse connection, authenticated as the app's service principal.
 
+    Databricks Apps do not set a static ``DATABRICKS_TOKEN``; they inject OAuth
+    client credentials for the app's own service principal. The SDK's ``Config``
+    resolves those automatically, so auth here must go through it rather than a
+    hand-rolled ``access_token``.
+    """
+    from databricks import sql  # noqa: PLC0415
+    from databricks.sdk.core import Config as SdkConfig  # noqa: PLC0415
+
+    cfg = SdkConfig()
     http_path = os.environ.get("DATABRICKS_HTTP_PATH") or (
         f"/sql/1.0/warehouses/{os.environ['DATABRICKS_WAREHOUSE_ID']}"
     )
     return sql.connect(
-        server_hostname=os.environ["DATABRICKS_HOST"].replace("https://", ""),
+        server_hostname=cfg.host.replace("https://", ""),
         http_path=http_path,
-        access_token=os.environ.get("DATABRICKS_TOKEN"),
+        credentials_provider=lambda: cfg.authenticate,
     )
 
 
@@ -85,11 +93,12 @@ def load_config() -> Config:
 
 
 def reviewer_identity() -> str:
-    """Identify the reviewer.
+    """Identify the reviewer for the audit trail (never shown in the UI as-is).
 
     Databricks Apps forward the signed-in user's identity in a header. An
     unattributed review is not a review, so the app refuses to record decisions
-    when it cannot tell who is making them.
+    when it cannot tell who is making them. The real identity is still what gets
+    written to ``reviewed_by`` - only the on-screen label is pseudonymous.
     """
     header = st.context.headers if hasattr(st, "context") else {}
     return (
@@ -97,6 +106,16 @@ def reviewer_identity() -> str:
         or header.get("X-Forwarded-Preferred-Username")
         or os.environ.get("RD_REVIEWER", "")
     )
+
+
+def reviewer_display_name(reviewer: str) -> str:
+    """A short, stable, non-identifying label shown in the UI instead of an email."""
+    if not reviewer:
+        return "Unknown reviewer"
+    import hashlib  # noqa: PLC0415
+
+    digest = hashlib.sha256(reviewer.encode("utf-8")).hexdigest()[:4].upper()
+    return f"Reviewer {digest}"
 
 
 # ---------------------------------------------------------------------------
@@ -263,10 +282,10 @@ def inject_style() -> None:
     )
 
 
-def render_sidebar(config: Config, reviewer: str) -> str:
+def render_sidebar(config: Config, reviewer_label: str) -> str:
     """Identity, filters and a compact corpus pulse. Returns the chosen priority filter."""
     with st.sidebar:
-        st.markdown(f"#### 👤 {reviewer or 'Unknown reviewer'}")
+        st.markdown(f"#### 👤 {reviewer_label}")
         st.caption(f"`{config.fq_schema}`")
         st.divider()
 
@@ -508,12 +527,28 @@ def main() -> None:
     inject_style()
     config = load_config()
     reviewer = reviewer_identity()
+    reviewer_label = reviewer_display_name(reviewer)
 
     st.title("🔬 Research claim review")
     st.caption(
         "The boundary between extracted candidate knowledge and what the Genie Agent may "
         "assert as a finding. Nothing below is visible to the agent until it is REVIEWED."
     )
+    with st.expander("ℹ️ What is this app?", expanded=False):
+        st.markdown(
+            "- The research pipeline **extracts candidate claims** from papers, benchmark docs "
+            "and repos — but nobody has checked them yet.\n"
+            "- **You are that check.** Every claim here needs a human decision before the Genie "
+            "Agent may ever cite it as a finding.\n"
+            "- **📋 Review queue** — claims waiting on you: accept, amend the scope fields, or "
+            "reject, with a note either way.\n"
+            "- **📊 Corpus overview** — how big the corpus is and how much of it is actually "
+            "reviewed vs. still pending.\n"
+            "- **❓ Open questions** — evidence-backed gaps the corpus has found in itself.\n"
+            "- Amending never rewrites what a source claims to have found — only the scope "
+            "fields (task, method, metric, benchmark, condition) that decide what it may be "
+            "compared against."
+        )
 
     if not reviewer:
         st.error(
@@ -522,7 +557,7 @@ def main() -> None:
         )
         return
 
-    priority = render_sidebar(config, reviewer)
+    priority = render_sidebar(config, reviewer_label)
 
     try:
         tab_queue, tab_overview, tab_questions = st.tabs(
