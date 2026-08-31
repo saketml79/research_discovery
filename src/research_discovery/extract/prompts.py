@@ -93,7 +93,20 @@ Passage:
 {chunk_text}
 \"\"\"
 
-Return JSON with a "claims" array. Extract at most {max_claims} claims.
+Return ONLY a single JSON object with exactly this shape (no other keys, no
+prose, no markdown code fence):
+
+{{"claims": [{{"claim_text": "...", "claim_type": "PERFORMANCE", "task": null,
+"method": null, "metric": null, "metric_value": null, "metric_unit": null,
+"benchmark": null, "condition_text": null, "evidence_excerpt": "...",
+"missing_field_reason": null, "confidence": 0.9}}]}}
+
+If the passage contains no claim, return exactly {{"claims": []}}.
+claim_type must be one of: PERFORMANCE, LIMITATION, METHOD_DESCRIPTION,
+RESOURCE_COST, NEGATIVE_RESULT, RECOMMENDATION.
+Use exactly these field names - do not rename "claim_text" to "claim", and do
+not nest task/method/metric/benchmark/condition_text under a "scope" key.
+Extract at most {max_claims} claims.
 """
 
 

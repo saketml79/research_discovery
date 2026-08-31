@@ -111,6 +111,7 @@ class LlmClaimExtractor(ClaimExtractor):
         )
         raw = self._complete_with_retry(messages)
         payload = _parse_json(raw)
+        payload = _normalize_payload(payload)
         _validate_schema(payload)
 
         candidates: list[CandidateClaim] = []
@@ -149,19 +150,74 @@ class LlmClaimExtractor(ClaimExtractor):
         raise ExtractionError(f"model call failed after {_MAX_ATTEMPTS} attempts: {last}") from last
 
 
-def _parse_json(raw: str) -> dict[str, Any]:
-    """Parse the model response, tolerating a surrounding code fence."""
+def _parse_json(raw: str) -> Any:
+    """Parse the model response, tolerating a surrounding code fence or
+    trailing text after the JSON value (weaker models sometimes restate the
+    answer, or add a second near-duplicate object, after a valid one)."""
     text = raw.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    decoder = json.JSONDecoder()
     try:
-        return json.loads(text)
+        value, _ = decoder.raw_decode(text)
+        return value
     except json.JSONDecodeError:
         match = _JSON_BLOCK.search(text)
         if not match:
             raise ExtractionError(f"model response was not JSON: {text[:200]!r}") from None
         try:
-            return json.loads(match.group(0))
+            value, _ = decoder.raw_decode(match.group(0))
+            return value
         except json.JSONDecodeError as exc:
             raise ExtractionError(f"model response was not valid JSON: {exc}") from exc
+
+
+_KEY_ALIASES = {"claim": "claim_text"}
+_SCOPE_KEYS = ("task", "method", "metric", "benchmark", "condition_text")
+_ITEM_LIKE_KEYS = {"claim_text", "claim", "claim_type", "confidence", "scope"}
+
+
+def _normalize_payload(payload: Any) -> dict[str, Any]:
+    """Repair common weaker-model deviations from the exact response shape.
+
+    Never invents claim content or silently tolerates genuinely unknown
+    fields - only reshapes the two wrapping mistakes a smaller instruct model
+    actually makes: returning a bare array, or a single claim object with no
+    "claims" wrapper at all.
+    """
+    if isinstance(payload, list):
+        payload = {"claims": payload}
+    elif isinstance(payload, dict) and "claims" not in payload and _ITEM_LIKE_KEYS & payload.keys():
+        payload = {"claims": [payload]}
+    if not isinstance(payload, dict):
+        raise ExtractionError(f"model response was not a JSON object or array: {payload!r}")
+    claims = payload.get("claims")
+    if not isinstance(claims, list):
+        raise ExtractionError("response is missing a 'claims' array")
+
+    normalized_claims = []
+    for item in claims:
+        if not isinstance(item, dict):
+            normalized_claims.append(item)
+            continue
+        item = dict(item)
+        scope = item.pop("scope", None)
+        if isinstance(scope, dict):
+            for key in _SCOPE_KEYS:
+                item.setdefault(key, scope.get(key))
+        for alias, canonical in _KEY_ALIASES.items():
+            if alias in item and canonical not in item:
+                item[canonical] = item.pop(alias)
+        # A model sometimes answers "no claim here" as an object with
+        # claim_text left null/empty rather than an empty claims array; that
+        # is a real, valid answer, not a formatting error - drop it silently.
+        if not item.get("claim_text"):
+            continue
+        normalized_claims.append(item)
+    return {"claims": normalized_claims}
 
 
 def _validate_schema(payload: dict[str, Any]) -> None:

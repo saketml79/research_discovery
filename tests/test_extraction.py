@@ -229,6 +229,72 @@ class TestLlmExtractor(unittest.TestCase):
     def test_version_records_model_and_prompt(self):
         self.assertIn("test-model", self._extractor({"claims": []}).version)
 
+    def test_tolerates_a_bare_claims_array(self):
+        payload = [
+            {
+                "claim_text": "Graph retrieval reaches 0.62 F1 on HotpotQA.",
+                "claim_type": "PERFORMANCE",
+                "confidence": 0.9,
+            }
+        ]
+        candidates = self._extractor(payload).extract(chunk())
+        self.assertEqual(len(candidates), 1)
+
+    def test_tolerates_a_single_unwrapped_claim_object(self):
+        payload = {
+            "claim_text": "Graph retrieval reaches 0.62 F1 on HotpotQA.",
+            "claim_type": "PERFORMANCE",
+            "confidence": 0.9,
+        }
+        candidates = self._extractor(payload).extract(chunk())
+        self.assertEqual(len(candidates), 1)
+
+    def test_renames_claim_alias_to_claim_text(self):
+        payload = {
+            "claims": [
+                {
+                    "claim": "Graph retrieval reaches 0.62 F1 on HotpotQA.",
+                    "claim_type": "PERFORMANCE",
+                    "confidence": 0.9,
+                }
+            ]
+        }
+        candidates = self._extractor(payload).extract(chunk())
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].claim_text, "Graph retrieval reaches 0.62 F1 on HotpotQA.")
+
+    def test_flattens_nested_scope_object(self):
+        payload = {
+            "claims": [
+                {
+                    "claim_text": "Graph retrieval reaches 0.62 F1 on HotpotQA.",
+                    "claim_type": "PERFORMANCE",
+                    "confidence": 0.9,
+                    "scope": {"task": "multi_hop_qa", "benchmark": "hotpotqa"},
+                }
+            ]
+        }
+        candidates = self._extractor(payload).extract(chunk())
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].task, "multi_hop_qa")
+        self.assertEqual(candidates[0].benchmark, "hotpotqa")
+
+    def test_drops_no_claim_items_with_empty_claim_text(self):
+        payload = {
+            "claims": [
+                {
+                    "claim": None,
+                    "missing_field_reason": "citation only",
+                    "confidence": 1.0,
+                }
+            ]
+        }
+        self.assertEqual(list(self._extractor(payload).extract(chunk())), [])
+
+    def test_tolerates_trailing_data_after_json(self):
+        payload = '{"claims": []}\n{"claims": []}'
+        self.assertEqual(list(self._extractor(payload).extract(chunk())), [])
+
     def test_batch_failure_is_isolated(self):
         client = StubChat("not json")
         extractor = LlmClaimExtractor(client, model_name="m", sleep=lambda _: None)
