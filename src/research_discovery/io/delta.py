@@ -85,7 +85,10 @@ def upsert(
         logger.info("dry run: would merge %d rows into %s on %s", len(rows), table, key)
         return len(rows)
 
-    frame = spark.createDataFrame(rows)
+    # An all-null column (e.g. an optional field unset across the whole batch)
+    # can't be type-inferred by createDataFrame; the target table's own schema
+    # is always authoritative, so use it instead of letting Spark guess.
+    frame = spark.createDataFrame(rows, schema=spark.table(table).schema)
     view = f"_stage_{leaf}"
     frame.createOrReplaceTempView(view)
 
@@ -115,7 +118,7 @@ def append(spark: Any, table: str, records: Sequence[Any], *, dry_run: bool = Fa
     if dry_run:
         logger.info("dry run: would append %d rows to %s", len(rows), table)
         return len(rows)
-    spark.createDataFrame(rows).write.mode("append").saveAsTable(table)
+    spark.createDataFrame(rows, schema=spark.table(table).schema).write.mode("append").saveAsTable(table)
     return len(rows)
 
 

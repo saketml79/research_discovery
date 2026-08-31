@@ -167,18 +167,27 @@ def run(
 
         if spark is not None and not config.dry_run:
             if candidate_rows:
-                spark.createDataFrame(candidate_rows).createOrReplaceTempView("_stage_candidates")
+                candidate_table = config.table("research_source_candidate")
+                candidate_schema = spark.table(candidate_table).schema
+                spark.createDataFrame(candidate_rows, schema=candidate_schema).createOrReplaceTempView(
+                    "_stage_candidates"
+                )
                 spark.sql(
                     f"""
-                    MERGE INTO {config.table('research_source_candidate')} AS t
+                    MERGE INTO {candidate_table} AS t
                     USING _stage_candidates AS s ON t.candidate_id = s.candidate_id
                     WHEN NOT MATCHED THEN INSERT *
                     """
                 )
             if run_rows:
-                spark.createDataFrame(run_rows).write.mode("append").saveAsTable(
-                    config.table("research_discovery_run")
-                )
+                target_table = config.table("research_discovery_run")
+                # provider_errors is frequently all-None across a batch (no
+                # provider failures); createDataFrame can't infer a type for
+                # an all-null column, so use the target Delta table's schema.
+                target_schema = spark.table(target_table).schema
+                spark.createDataFrame(run_rows, schema=target_schema).write.mode(
+                    "append"
+                ).saveAsTable(target_table)
             spark.sql(
                 f"""
                 UPDATE {config.table('research_standing_query')}
