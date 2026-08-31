@@ -136,7 +136,12 @@ def _genie_client(user_token: str, space_id: str) -> Any:
 
     from research_discovery.agent.client import GenieAgentClient, WorkspaceGenieConversationApi
 
-    workspace_client = WorkspaceClient(host=os.environ["DATABRICKS_HOST"], token=user_token)
+    # auth_type is forced because the app's own service-principal OAuth env vars
+    # (DATABRICKS_CLIENT_ID/SECRET) are always present alongside this user token;
+    # left ambiguous, Config refuses to pick between the two auth methods.
+    workspace_client = WorkspaceClient(
+        host=os.environ["DATABRICKS_HOST"], token=user_token, auth_type="pat"
+    )
     api = WorkspaceGenieConversationApi(workspace_client)
     return GenieAgentClient(api, space_id)
 
