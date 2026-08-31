@@ -404,13 +404,16 @@ def render_claim(config: Config, item: dict[str, Any], reviewer: str) -> None:
                 st.code(figure.get("extracted_text") or "", language=None)
         else:
             evidence = fetch_evidence(config, item["claim_id"])
-            if evidence:
+            if evidence and evidence.get("text"):
                 if evidence.get("extraction_warning"):
                     st.warning(f"Parser warning: {evidence['extraction_warning']}")
                 st.markdown(f"**{evidence.get('section_title') or 'Source passage'}**")
                 st.info(evidence["text"])
+            elif item.get("evidence_excerpt"):
+                st.caption("No stored chunk for this claim; showing its recorded evidence excerpt.")
+                st.info(item["evidence_excerpt"])
             else:
-                st.caption("No stored passage for this claim.")
+                st.caption("No stored passage or excerpt for this claim.")
 
     st.markdown("**Scope** — the fields that decide what this claim can be compared with")
     amendments: dict[str, Any] = {}
