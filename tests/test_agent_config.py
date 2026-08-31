@@ -127,7 +127,10 @@ class TestDeployment(unittest.TestCase):
     def test_request_carries_serialized_space(self):
         payload = build_request(CONFIG, "wh-1")
         self.assertEqual(payload["warehouse_id"], "wh-1")
-        self.assertIn("v_research_claim_current", payload["serialized_space"])
+        self.assertIsInstance(payload["serialized_space"], str)
+        wire = json.loads(payload["serialized_space"])
+        self.assertEqual(wire["version"], 2)
+        self.assertIn("v_research_claim_current", wire["instructions"]["text_instructions"][0]["content"][0])
 
     def test_first_deployment_creates(self):
         client = StubGenieClient()

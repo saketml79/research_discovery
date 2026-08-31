@@ -25,6 +25,7 @@ SELECT
   c.condition_text,
   c.evidence_excerpt,
   c.page_number,
+  c.source_id,
   c.source_url,
   s.title            AS source_title,
   s.source_type,

@@ -276,5 +276,16 @@
         "Qualifies the summary with the unreviewed backlog from v_source_coverage."
       ]
     }
+  ],
+  "_example_queries": [
+    "What do reviewed sources claim about GraphRAG global search quality?",
+    "Where do sources disagree about GraphRAG evaluation?",
+    "Are these two results comparable?",
+    "Which evaluation gaps appear repeatedly in this corpus?",
+    "How current and how well reviewed is this corpus?",
+    "What related work exists that this corpus does not hold?",
+    "Why can't this corpus answer my question about X?",
+    "When did we last look for new work on this topic?",
+    "What unreviewed claims should a reviewer look at first?"
   ]
 }

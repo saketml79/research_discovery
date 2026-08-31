@@ -44,9 +44,12 @@ def get_connection() -> Any:
     """Open a SQL warehouse connection using the app's service principal."""
     from databricks import sql  # noqa: PLC0415
 
+    http_path = os.environ.get("DATABRICKS_HTTP_PATH") or (
+        f"/sql/1.0/warehouses/{os.environ['DATABRICKS_WAREHOUSE_ID']}"
+    )
     return sql.connect(
         server_hostname=os.environ["DATABRICKS_HOST"].replace("https://", ""),
-        http_path=os.environ["DATABRICKS_HTTP_PATH"],
+        http_path=http_path,
         access_token=os.environ.get("DATABRICKS_TOKEN"),
     )
 

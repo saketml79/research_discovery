@@ -49,6 +49,19 @@ resources:
               catalog: ${var.catalog}
               schema: ${var.schema}
 
+        - task_key: create_search_passages_fallback
+          depends_on: [{ task_key: create_functions }]
+          description: >-
+            Overrides search_passages with a lexical-scan implementation when no
+            AI Search / Vector Search endpoint is configured for this deployment.
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../sql/functions/099_search_passages_fallback.sql
+            parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+
         - task_key: create_discovery_tables
           depends_on: [{ task_key: create_views }]
           sql_task:
@@ -60,7 +73,7 @@ resources:
               schema: ${var.schema}
 
         - task_key: seed_demo
-          depends_on: [{ task_key: create_functions }, { task_key: create_discovery_tables }]
+          depends_on: [{ task_key: create_search_passages_fallback }, { task_key: create_discovery_tables }]
           sql_task:
             warehouse_id: ${var.warehouse_id}
             file:
@@ -87,19 +100,9 @@ resources:
       max_concurrent_runs: 1
       queue:
         enabled: true
-      job_clusters:
-        - job_cluster_key: pipeline
-          new_cluster:
-            spark_version: "15.4.x-scala2.12"
-            data_security_mode: SINGLE_USER
-            num_workers: 1
-            node_type_id: "{{node_type_id}}"
-            spark_env_vars:
-              RD_CATALOG: ${var.catalog}
-              RD_SCHEMA: ${var.schema}
       tasks:
         - task_key: discover
-          job_cluster_key: pipeline
+          environment_key: default
           max_retries: 1
           description: >-
             Sweep standing queries against the scholarly metadata APIs. Records
@@ -110,11 +113,9 @@ resources:
             parameters:
               - --catalog=${var.catalog}
               - --schema=${var.schema}
-          libraries:
-            - whl: ../dist/*.whl
 
         - task_key: volume_ingest
-          job_cluster_key: pipeline
+          environment_key: default
           max_retries: 2
           description: >-
             Auto Loader pass over the raw-sources volume, for PDFs a human
@@ -127,12 +128,10 @@ resources:
               - --schema=${var.schema}
               - --volume=${var.volume}
               - --parser=${var.parser}
-          libraries:
-            - whl: ../dist/*.whl
 
         - task_key: ingest
           depends_on: [{ task_key: discover }]
-          job_cluster_key: pipeline
+          environment_key: default
           max_retries: 2
           min_retry_interval_millis: 30000
           python_wheel_task:
@@ -144,12 +143,10 @@ resources:
               - --volume=${var.volume}
               - --parser=${var.parser}
               - --seed-path=../seeds/sources.csv
-          libraries:
-            - whl: ../dist/*.whl
 
         - task_key: extract
           depends_on: [{ task_key: ingest }, { task_key: volume_ingest }]
-          job_cluster_key: pipeline
+          environment_key: default
           max_retries: 2
           python_wheel_task:
             package_name: research_discovery
@@ -159,12 +156,10 @@ resources:
               - --schema=${var.schema}
               - --extractor=${var.extractor}
               - --extraction-model=${var.extraction_model}
-          libraries:
-            - whl: ../dist/*.whl
 
         - task_key: supersede
           depends_on: [{ task_key: extract }]
-          job_cluster_key: pipeline
+          environment_key: default
           description: >-
             Queue reviewed claims for re-review where their source has a newer
             version. Supersedes nothing on its own - a reviewer decides.
@@ -174,24 +169,20 @@ resources:
             parameters:
               - --catalog=${var.catalog}
               - --schema=${var.schema}
-          libraries:
-            - whl: ../dist/*.whl
 
         - task_key: relate
           depends_on: [{ task_key: supersede }]
-          job_cluster_key: pipeline
+          environment_key: default
           python_wheel_task:
             package_name: research_discovery
             entry_point: relate
             parameters:
               - --catalog=${var.catalog}
               - --schema=${var.schema}
-          libraries:
-            - whl: ../dist/*.whl
 
         - task_key: index
           depends_on: [{ task_key: relate }]
-          job_cluster_key: pipeline
+          environment_key: default
           python_wheel_task:
             package_name: research_discovery
             entry_point: index
@@ -199,8 +190,12 @@ resources:
               - --catalog=${var.catalog}
               - --schema=${var.schema}
               - --ai-search-endpoint=${var.ai_search_endpoint}
-          libraries:
-            - whl: ../dist/*.whl
+      environments:
+        - environment_key: default
+          spec:
+            client: "3"
+            dependencies:
+              - ../dist/*.whl
 
     research_discovery_deploy_agent:
       name: "[${bundle.target}] Research Discovery :: deploy Genie Agent"

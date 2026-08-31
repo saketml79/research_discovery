@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from ..config import Config
 
@@ -440,6 +440,81 @@ def synonyms() -> list[dict[str, Any]]:
     ]
 
 
+#: Short, agent-facing description per runtime view, keyed by view name.
+#: One sentence pulled from the view's own SQL COMMENT in sql/ddl/*.sql.
+VIEW_DESCRIPTIONS: dict[str, str] = {
+    "v_research_claim_current": (
+        "Reviewed, current claims with full citation context. ONLY these claims may be "
+        "used for an affirmative research statement."
+    ),
+    "v_research_claim_candidate": (
+        "Extracted but NOT yet reviewed claims. Never present these as findings."
+    ),
+    "v_claim_comparison": (
+        "Pairs of reviewed claims with an explicit comparability verdict. "
+        "INSUFFICIENT_EVIDENCE means the pair is not a disagreement."
+    ),
+    "v_research_open_questions": (
+        "Open research questions derived from the corpus itself, each backed by counted claim evidence."
+    ),
+    "v_source_coverage": (
+        "Corpus coverage, freshness and review backlog by source type."
+    ),
+    "v_source_candidate_current": (
+        "Discovered works NOT yet in the corpus. EXTERNAL_CANDIDATE tier: existence only, "
+        "never state what an unread work found."
+    ),
+    "v_corpus_gap": (
+        "Where discovery found relevant work the corpus does not hold; distinguishes "
+        "not-studied from not-ingested from not-fetchable."
+    ),
+    "v_discovery_freshness": (
+        "When each standing query was last swept and what it returned."
+    ),
+}
+
+
+def _stable_hex_id(*parts: str) -> str:
+    """Deterministic lowercase 32-hex id, the id format the Genie API requires."""
+    import hashlib
+
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:32]
+
+
+def to_wire_format(space: Mapping[str, Any]) -> dict[str, Any]:
+    """Translate the internal, richly-validated space model into the shape the
+    Genie Spaces API actually accepts for ``serialized_space``.
+
+    The GA API only understands ``version``, ``config.sample_questions``,
+    ``data_sources.tables``/``metric_views`` and ``instructions.text_instructions``.
+    Joins, sql_expressions, synonyms, mcp_tools and UC functions are not part of
+    this payload; UC functions and MCP tools are attached to the space separately
+    (Genie Spaces UI / tool-binding APIs), and the rest exist here only to teach
+    and validate this project's own governance rules before deployment.
+    """
+    sample_questions = [
+        {"id": _stable_hex_id("question", text), "question": [text]}
+        for text in space.get("_example_queries", [])
+    ]
+    tables = [
+        {
+            "identifier": entry["identifier"],
+            "description": [VIEW_DESCRIPTIONS.get(entry["identifier"].rsplit(".", 1)[-1], "")],
+        }
+        for entry in sorted(space["tables"], key=lambda e: e["identifier"])
+    ]
+    return {
+        "version": 2,
+        "config": {"sample_questions": sample_questions},
+        "data_sources": {"tables": tables},
+        "instructions": {
+            "text_instructions": [
+                {"id": _stable_hex_id("instructions", AGENT_DISPLAY_NAME), "content": [space["instructions"]]}
+            ]
+        },
+    }
+
+
 def build_serialized_space(config: Config) -> dict[str, Any]:
     """Build the full Genie Agent ``serialized_space`` payload.
 
@@ -480,6 +555,7 @@ def build_serialized_space(config: Config) -> dict[str, Any]:
             }
             for b in benchmarks(config)
         ],
+        "_example_queries": [e.question for e in example_queries(config)],
     }
 
 

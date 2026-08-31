@@ -213,11 +213,14 @@ CREATE TABLE IF NOT EXISTS agent_proposal (
   created_at          TIMESTAMP NOT NULL COMMENT 'Creation time.',
   approved_by         STRING          COMMENT 'Approver principal.',
   approved_at         TIMESTAMP       COMMENT 'Approval time.',
-  CONSTRAINT agent_proposal_pk PRIMARY KEY (proposal_id),
-  CONSTRAINT agent_proposal_status_chk CHECK (status IN ('PENDING_APPROVAL', 'APPROVED', 'REJECTED'))
+  CONSTRAINT agent_proposal_pk PRIMARY KEY (proposal_id)
 )
 USING DELTA
 COMMENT 'Approval-gated proposals written by the agent. Inserts are PENDING_APPROVAL only; the agent has no tool that executes a proposal.';
+
+-- CHECK constraints are not supported inline in CREATE TABLE on all SQL warehouse versions; add separately, idempotently.
+ALTER TABLE agent_proposal DROP CONSTRAINT IF EXISTS agent_proposal_status_chk;
+ALTER TABLE agent_proposal ADD CONSTRAINT agent_proposal_status_chk CHECK (status IN ('PENDING_APPROVAL', 'APPROVED', 'REJECTED'));
 
 -- ---------------------------------------------------------------------------
 -- 9. Pipeline run log. Makes ingestion behaviour queryable by the agent.

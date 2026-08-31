@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from ..config import Config
-from .genie_config import AGENT_DISPLAY_NAME, build_serialized_space
+from .genie_config import AGENT_DISPLAY_NAME, build_serialized_space, to_wire_format
 from .validate import assert_valid
 
 logger = logging.getLogger(__name__)
@@ -79,6 +79,11 @@ class WorkspaceGenieClient:
 def build_request(config: Config, warehouse_id: str) -> dict[str, Any]:
     """Build the API request body, validating the space first.
 
+    ``space`` is this project's own rich, validated model (tables, functions,
+    joins, benchmarks, etc.); the Genie Spaces API's ``serialized_space`` field
+    only understands a narrower wire format, so it is translated with
+    ``to_wire_format`` after validation passes.
+
     Raises:
         ConfigValidationError: The configuration is not deployable.
         ValueError: ``warehouse_id`` is empty.
@@ -88,11 +93,12 @@ def build_request(config: Config, warehouse_id: str) -> dict[str, Any]:
     space = build_serialized_space(config)
     space["warehouse_id"] = warehouse_id
     assert_valid(space)
+    wire = to_wire_format(space)
     return {
-        "display_name": space["display_name"],
+        "title": space["display_name"],
         "description": space["description"],
         "warehouse_id": warehouse_id,
-        "serialized_space": json.dumps(space),
+        "serialized_space": json.dumps(wire),
     }
 
 
@@ -121,7 +127,12 @@ def deploy(
         return DeploymentResult(space_id="", action="VALIDATED_ONLY", display_name=AGENT_DISPLAY_NAME)
 
     existing = next(
-        (s for s in client.list_spaces() if s.get("display_name") == AGENT_DISPLAY_NAME), None
+        (
+            s
+            for s in client.list_spaces()
+            if s.get("title") == AGENT_DISPLAY_NAME or s.get("display_name") == AGENT_DISPLAY_NAME
+        ),
+        None,
     )
     if existing:
         space_id = str(existing.get("space_id") or existing.get("id"))

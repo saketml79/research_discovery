@@ -28,16 +28,21 @@ RETURN
   SELECT claim_id, claim_text, claim_type, task, method, metric, metric_value,
          benchmark, condition_text, evidence_excerpt, page_number, source_url,
          source_type, published_at, reviewed_at
-  FROM v_research_claim_current
-  WHERE (search_claims.query_text IS NULL
-         OR LOWER(claim_text)     LIKE '%' || LOWER(search_claims.query_text) || '%'
-         OR LOWER(COALESCE(method, ''))         LIKE '%' || LOWER(search_claims.query_text) || '%'
-         OR LOWER(COALESCE(condition_text, '')) LIKE '%' || LOWER(search_claims.query_text) || '%')
-    AND (search_claims.task_filter      IS NULL OR task      = search_claims.task_filter)
-    AND (search_claims.method_filter    IS NULL OR method    = search_claims.method_filter)
-    AND (search_claims.benchmark_filter IS NULL OR benchmark = search_claims.benchmark_filter)
-  ORDER BY published_at DESC NULLS LAST
-  LIMIT COALESCE(search_claims.max_results, 10);
+  FROM (
+    SELECT claim_id, claim_text, claim_type, task, method, metric, metric_value,
+           benchmark, condition_text, evidence_excerpt, page_number, source_url,
+           source_type, published_at, reviewed_at,
+           ROW_NUMBER() OVER (ORDER BY published_at DESC NULLS LAST) AS rn
+    FROM v_research_claim_current
+    WHERE (search_claims.query_text IS NULL
+           OR LOWER(claim_text)     LIKE '%' || LOWER(search_claims.query_text) || '%'
+           OR LOWER(COALESCE(method, ''))         LIKE '%' || LOWER(search_claims.query_text) || '%'
+           OR LOWER(COALESCE(condition_text, '')) LIKE '%' || LOWER(search_claims.query_text) || '%')
+      AND (search_claims.task_filter      IS NULL OR task      = search_claims.task_filter)
+      AND (search_claims.method_filter    IS NULL OR method    = search_claims.method_filter)
+      AND (search_claims.benchmark_filter IS NULL OR benchmark = search_claims.benchmark_filter)
+  )
+  WHERE rn <= COALESCE(search_claims.max_results, 10);
 
 -- ---------------------------------------------------------------------------
 -- compare_claims: the comparability gate, as a deterministic function.
@@ -138,12 +143,15 @@ RETURNS TABLE (
 COMMENT 'Return open research questions derived from the corpus: unresolved comparisons, claims missing scope, and findings reported by only one source. Every row is backed by counted claims. Never state a research gap that this function did not return.'
 RETURN
   SELECT question_type, question_text, task, metric, benchmark, evidence_count, claim_ids
-  FROM v_research_open_questions
-  WHERE get_open_questions.topic_filter IS NULL
-     OR LOWER(question_text) LIKE '%' || LOWER(get_open_questions.topic_filter) || '%'
-     OR LOWER(COALESCE(task, '')) LIKE '%' || LOWER(get_open_questions.topic_filter) || '%'
-  ORDER BY evidence_count DESC
-  LIMIT COALESCE(get_open_questions.max_results, 5);
+  FROM (
+    SELECT question_type, question_text, task, metric, benchmark, evidence_count, claim_ids,
+           ROW_NUMBER() OVER (ORDER BY evidence_count DESC) AS rn
+    FROM v_research_open_questions
+    WHERE get_open_questions.topic_filter IS NULL
+       OR LOWER(question_text) LIKE '%' || LOWER(get_open_questions.topic_filter) || '%'
+       OR LOWER(COALESCE(task, '')) LIKE '%' || LOWER(get_open_questions.topic_filter) || '%'
+  )
+  WHERE rn <= COALESCE(get_open_questions.max_results, 5);
 
 -- ---------------------------------------------------------------------------
 -- get_corpus_coverage: honest scope of what the corpus can answer.
@@ -162,33 +170,11 @@ RETURN SELECT * FROM v_source_coverage;
 --
 -- Chunks are the retrieval corpus; claims are the comparison unit. This tool
 -- exists so a user can ask for supporting passages beyond the structured claim
--- record, without letting passage text stand in for a reviewed claim.
---
--- Requires the Delta Sync index built by index_job. When AI Search is not
--- configured for the deployment, deploy 099_search_passages_fallback.sql
--- instead, which serves the same contract with a LIKE scan.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION search_passages(
-  query_text STRING COMMENT 'Natural-language description of the passage to find.',
-  max_results INT COMMENT 'Maximum passages to return. Use 5 unless the user asks for more.'
-)
-RETURNS TABLE (
-  chunk_id STRING, text STRING, page_number INT, section_title STRING,
-  source_url STRING, source_title STRING, source_type STRING,
-  parser_name STRING, extraction_warning STRING, search_score DOUBLE
-)
-COMMENT 'Retrieve supporting passages from REVIEWED sources. A passage is evidence context, NOT a finding: it has not been through claim review, so never state a result that rests only on a passage. Cite the source_url and page_number, and surface extraction_warning when one is present. Prefer search_claims for anything you intend to assert.'
-RETURN
-  SELECT r.chunk_id, r.text, r.page_number, r.section_title,
-         s.canonical_url, s.title, s.source_type,
-         r.parser_name, r.extraction_warning, r.search_score
-  FROM VECTOR_SEARCH(
-         index => current_catalog() || '.' || current_schema() || '.research_chunk_index',
-         query_text => search_passages.query_text,
-         num_results => COALESCE(search_passages.max_results, 5)
-       ) AS r
-  JOIN research_source AS s ON r.source_id = s.source_id
-  WHERE s.ingestion_status IN ('REVIEWED', 'INDEXED');
+-- search_passages is deliberately NOT defined here: it depends on whether an
+-- AI Search / Vector Search endpoint is configured for this deployment. Deploy
+-- 098_search_passages_vector.sql (requires a built index) or
+-- 099_search_passages_fallback.sql (lexical scan, no endpoint needed) instead.
+-- The bootstrap job runs the fallback by default.
 
 -- ---------------------------------------------------------------------------
 -- get_taxonomy: the controlled vocabulary, so the agent maps a user's wording
@@ -218,13 +204,18 @@ RETURNS TABLE (
 )
 COMMENT 'Return open review-queue items, highest priority first. Use it to answer "what needs review" and to ground a recommended next step in work that is actually outstanding. Items here are unreviewed by definition - never present their claim text as a finding.'
 RETURN
-  SELECT q.review_id, q.target_type, q.target_id, q.priority, q.reason,
-         c.claim_text, c.source_url, q.created_at
-  FROM research_review_queue AS q
-  LEFT JOIN research_claim AS c ON q.target_type = 'CLAIM' AND q.target_id = c.claim_id
-  WHERE q.status = 'OPEN'
-  ORDER BY CASE q.priority WHEN 'HIGH' THEN 0 WHEN 'NORMAL' THEN 1 ELSE 2 END, q.created_at
-  LIMIT COALESCE(get_review_backlog.max_results, 10);
+  SELECT review_id, target_type, target_id, priority, reason, claim_text, source_url, created_at
+  FROM (
+    SELECT q.review_id, q.target_type, q.target_id, q.priority, q.reason,
+           c.claim_text, c.source_url, q.created_at,
+           ROW_NUMBER() OVER (
+             ORDER BY CASE q.priority WHEN 'HIGH' THEN 0 WHEN 'NORMAL' THEN 1 ELSE 2 END, q.created_at
+           ) AS rn
+    FROM research_review_queue AS q
+    LEFT JOIN research_claim AS c ON q.target_type = 'CLAIM' AND q.target_id = c.claim_id
+    WHERE q.status = 'OPEN'
+  )
+  WHERE rn <= COALESCE(get_review_backlog.max_results, 10);
 
 -- ---------------------------------------------------------------------------
 -- get_figure_evidence: provenance for a claim read from a chart or diagram.
