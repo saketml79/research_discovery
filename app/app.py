@@ -123,6 +123,11 @@ def genie_space_url() -> str | None:
     host = os.environ.get("DATABRICKS_HOST")
     if not space_id or not host:
         return None
+    # DATABRICKS_HOST in the Apps runtime is schemeless (e.g. "dbc-x.cloud.
+    # databricks.com"); an href without a scheme is resolved as a relative
+    # path against the app's own origin instead of opening Databricks.
+    if not host.startswith("http://") and not host.startswith("https://"):
+        host = f"https://{host}"
     return f"{host.rstrip('/')}/genie/rooms/{space_id}"
 
 
@@ -370,57 +375,24 @@ def inject_style() -> None:
         .rd-badge-high {color: #b91c1c; font-weight: 600;}
         .rd-badge-normal {color: #92400e; font-weight: 600;}
         .rd-badge-low {color: #6b7280; font-weight: 600;}
-        .rd-genie-panel {
-            border: 1px solid #d1d5db; border-radius: 6px; padding: 1.25rem 1.5rem;
-            margin-bottom: 1rem;
-        }
-        .rd-genie-link {
-            display: inline-block; padding: 0.5rem 1rem; border-radius: 4px;
-            background: #1a1a1a; color: #fff !important; text-decoration: none;
-            font-weight: 600; font-size: 0.9rem;
-        }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
 
-def render_sidebar(config: Config, reviewer_label: str) -> str:
-    """Identity, filters and a compact corpus pulse. Returns the chosen priority filter."""
-    with st.sidebar:
-        st.markdown(f"**{reviewer_label}**")
-        st.caption(f"`{config.fq_schema}`")
-        st.divider()
-
-        priority = st.selectbox(
-            "Priority filter", ["ALL", "HIGH", "NORMAL", "LOW"],
-            help="HIGH covers low-confidence extractions, numeric claims without an "
-            "excerpt, and anything missing most of its scope.",
-        )
-        if st.button("Refresh", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
-
-        st.divider()
-        st.markdown("**Corpus at a glance**")
-        try:
-            for row in fetch_coverage(config):
-                reviewed = row.get("reviewed_claim_count") or 0
-                pending = row.get("unreviewed_claim_count") or 0
-                total = reviewed + pending
-                share = reviewed / total if total else 0.0
-                st.caption(f"{row['source_type']} — {reviewed} reviewed / {pending} pending")
-                st.progress(share)
-        except Exception as exc:  # noqa: BLE001 - sidebar must not crash the page
-            logger.exception("sidebar coverage query failed")
-            st.caption(f"Coverage unavailable: {exc}")
-
-        st.divider()
-        st.caption(
-            "A claim is invisible to the agent until it is REVIEWED here. "
-            "Amendments may only correct scope and citation fields — never the "
-            "source's reported finding."
-        )
+def render_identity_bar(config: Config, reviewer_label: str) -> str:
+    """Identity and priority filter, inline at the top of the review tab (no sidebar)."""
+    cols = st.columns([2, 2, 1, 1])
+    cols[0].caption(f"Signed in as **{reviewer_label}**")
+    priority = cols[1].selectbox(
+        "Priority filter", ["ALL", "HIGH", "NORMAL", "LOW"], label_visibility="collapsed",
+        help="HIGH covers low-confidence extractions, numeric claims without an "
+        "excerpt, and anything missing most of its scope.",
+    )
+    if cols[2].button("Refresh", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
     return priority
 
 
@@ -680,11 +652,10 @@ def render_genie_panel() -> None:
     authenticated as the signed-in user (OBO) - the same Genie Space you'd reach
     through the Databricks workspace UI, run from inside this page.
     """
-    st.markdown('<div class="rd-genie-panel">', unsafe_allow_html=True)
-    st.markdown("#### Ask the research agent")
     st.caption(
         "Answers cite claim records and source URLs, and refuse to compare claims whose "
-        "scope doesn't overlap. Backed by the same reviewed-claims corpus as the workstation below."
+        "scope doesn't overlap. Backed by the reviewed-claims corpus (see the Review "
+        "workstation tab)."
     )
 
     client = get_genie_client()
@@ -695,27 +666,34 @@ def render_genie_panel() -> None:
             "app's 'genie' authorization scope hasn't been granted yet)."
         )
         if url:
-            st.markdown(f'<a class="rd-genie-link" href="{url}" target="_blank">Open Genie agent</a>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+            st.link_button("Open Genie agent", url)
         return
 
     history: list[dict[str, str]] = st.session_state.setdefault("genie_history", [])
-    for turn in history:
-        with st.chat_message(turn["role"]):
-            st.markdown(turn["content"])
-
-    if not history:
-        st.caption("Try asking:")
-        cols = st.columns(len(SAMPLE_QUESTIONS))
-        for col, sample in zip(cols, SAMPLE_QUESTIONS):
-            if col.button(sample, key=f"sample:{sample}", use_container_width=True):
-                st.session_state["genie_pending_question"] = sample
-                st.rerun()
-
-    question = st.chat_input("Ask a question about the reviewed corpus")
     pending = st.session_state.pop("genie_pending_question", None)
-    question = question or pending
-    if question:
+
+    with st.container(border=True):
+        if not history:
+            st.caption("Try asking:")
+            cols = st.columns(2)
+            for index, sample in enumerate(SAMPLE_QUESTIONS):
+                if cols[index % 2].button(sample, key=f"sample:{sample}", use_container_width=True):
+                    pending = sample
+        else:
+            for turn in history:
+                with st.chat_message(turn["role"]):
+                    st.markdown(turn["content"])
+
+        with st.form("genie_ask_form", clear_on_submit=True, border=False):
+            input_cols = st.columns([5, 1])
+            question = input_cols[0].text_input(
+                "Ask a question", label_visibility="collapsed",
+                placeholder="Ask a question about the reviewed corpus",
+            )
+            asked = input_cols[1].form_submit_button("Ask", use_container_width=True)
+
+    if pending or (asked and question):
+        question = pending or question
         history.append({"role": "user", "content": question})
         with st.spinner("Genie is thinking..."):
             turn = client.ask(question, conversation_id=st.session_state.get("genie_conversation_id"))
@@ -736,37 +714,16 @@ def render_genie_panel() -> None:
         st.session_state.pop("genie_conversation_id", None)
         st.rerun()
     if url:
-        cols[1].markdown(f'<a class="rd-genie-link" href="{url}" target="_blank">Open in full Genie UI</a>', unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+        cols[1].link_button("Open in full Genie UI", url)
 
 
-def main() -> None:
-    """App entry point."""
-    st.set_page_config(page_title="Research Discovery", layout="wide")
-    inject_style()
-    config = load_config()
-    reviewer = reviewer_identity()
-    reviewer_label = reviewer_display_name(reviewer)
-
-    st.title("Research discovery")
-    render_genie_panel()
-
-    if not reviewer:
-        st.error(
-            "Could not identify you. An unattributed review is not a review, so decisions are "
-            "disabled. Sign in through the app, or set RD_REVIEWER when running locally."
-        )
-        return
-
-    priority = render_sidebar(config, reviewer_label)
-
-    st.markdown("---")
-    st.markdown("#### Review workstation")
+def render_review_workstation(config: Config, reviewer: str, reviewer_label: str) -> None:
+    """Secondary surface: accept/amend/reject candidate claims before Genie can cite them."""
     st.caption(
-        "Secondary to the agent above: this is where extracted candidate claims are "
-        "accepted, amended or rejected before Genie may cite them."
+        "Extracted candidate claims are accepted, amended or rejected here before Genie "
+        "(the tab next to this one) may cite them."
     )
-    with st.expander("What is this section?", expanded=False):
+    with st.expander("What is this tab?", expanded=False):
         st.markdown(
             "- The research pipeline **extracts candidate claims** from papers, benchmark docs "
             "and repos - but nobody has checked them yet.\n"
@@ -784,6 +741,15 @@ def main() -> None:
             "compared against."
         )
 
+    if not reviewer:
+        st.error(
+            "Could not identify you. An unattributed review is not a review, so decisions are "
+            "disabled. Sign in through the app, or set RD_REVIEWER when running locally."
+        )
+        return
+
+    priority = render_identity_bar(config, reviewer_label)
+
     try:
         tab_queue, tab_overview, tab_questions, tab_explorer = st.tabs(
             ["Review queue", "Corpus overview", "Open questions", "Data explorer"]
@@ -798,6 +764,23 @@ def main() -> None:
             render_data_explorer_tab(config)
     except Exception as exc:  # noqa: BLE001 - surfaced as a retry-able connection error
         render_connection_error(exc)
+
+
+def main() -> None:
+    """App entry point."""
+    st.set_page_config(page_title="Research Discovery", layout="wide")
+    inject_style()
+    config = load_config()
+    reviewer = reviewer_identity()
+    reviewer_label = reviewer_display_name(reviewer)
+
+    st.title("Research discovery")
+
+    tab_genie, tab_review = st.tabs(["Ask Genie", "Review workstation"])
+    with tab_genie:
+        render_genie_panel()
+    with tab_review:
+        render_review_workstation(config, reviewer, reviewer_label)
 
 
 if __name__ == "__main__":
