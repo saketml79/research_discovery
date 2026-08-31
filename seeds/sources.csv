@@ -1,0 +1,9 @@
+canonical_url,source_type,title,publisher,authors,license
+https://arxiv.org/abs/2404.16130,PRIMARY_PAPER,From Local to Global: A Graph RAG Approach to Query-Focused Summarization,arXiv,"Edge et al.",ARXIV-NONEXCLUSIVE
+https://arxiv.org/abs/2410.05779,PRIMARY_PAPER,LightRAG: Simple and Fast Retrieval-Augmented Generation,arXiv,"Guo et al.",ARXIV-NONEXCLUSIVE
+https://arxiv.org/abs/2405.14831,PRIMARY_PAPER,HippoRAG: Neurobiologically Inspired Long-Term Memory for LLMs,arXiv,"Gutierrez et al.",ARXIV-NONEXCLUSIVE
+https://arxiv.org/abs/2401.18059,PRIMARY_PAPER,RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval,arXiv,"Sarthi et al.",ARXIV-NONEXCLUSIVE
+https://arxiv.org/abs/1809.09600,BENCHMARK_DOC,HotpotQA: A Dataset for Diverse Explainable Multi-hop Question Answering,arXiv,"Yang et al.",ARXIV-NONEXCLUSIVE
+https://arxiv.org/abs/2108.00573,BENCHMARK_DOC,MuSiQue: Multihop Questions via Single-hop Question Composition,arXiv,"Trivedi et al.",ARXIV-NONEXCLUSIVE
+https://github.com/microsoft/graphrag,REPOSITORY,GraphRAG reference implementation,GitHub,Microsoft,MIT
+https://microsoft.github.io/graphrag/,BENCHMARK_DOC,GraphRAG documentation,Microsoft,Microsoft,METADATA_ONLY

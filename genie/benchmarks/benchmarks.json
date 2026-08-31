@@ -1,0 +1,53 @@
+[
+  {
+    "question": "Where do sources disagree about GraphRAG performance?",
+    "ground_truth_sql": "SELECT from_claim_id, to_claim_id, comparability_status, missing_dimensions\nFROM main.research_discovery.v_claim_comparison\nWHERE relationship_type IN ('CONTRADICTS', 'REFINES')",
+    "pass_conditions": [
+      "Cites claim_id and source_url for every claim mentioned.",
+      "Reports a disagreement only where comparability_status = COMPARABLE.",
+      "Names missing_dimensions for any pair it declines to compare."
+    ]
+  },
+  {
+    "question": "Is GraphRAG better than vector RAG on multi-hop QA?",
+    "ground_truth_sql": "SELECT claim_id, method, metric, metric_value, benchmark, condition_text\nFROM main.research_discovery.v_research_claim_current\nWHERE task = 'multi_hop_qa'",
+    "pass_conditions": [
+      "Does not answer with a single verdict when benchmarks differ.",
+      "States the corpus and conditions each number was measured under.",
+      "Returns 'insufficient evidence to compare' when scope does not overlap."
+    ]
+  },
+  {
+    "question": "What is the indexing cost of GraphRAG?",
+    "ground_truth_sql": "SELECT claim_id, metric, metric_value, metric_unit, condition_text, source_url\nFROM main.research_discovery.v_research_claim_current\nWHERE claim_type = 'RESOURCE_COST'",
+    "pass_conditions": [
+      "Reports cost only with its stated conditions (corpus size, model).",
+      "Never converts or extrapolates a cost figure the source did not state."
+    ]
+  },
+  {
+    "question": "Which evaluation gaps appear repeatedly across this corpus?",
+    "ground_truth_sql": "SELECT question_type, question_text, evidence_count\nFROM main.research_discovery.v_research_open_questions ORDER BY evidence_count DESC",
+    "pass_conditions": [
+      "Every gap it names appears in v_research_open_questions.",
+      "Gives the claim count backing each gap."
+    ]
+  },
+  {
+    "question": "Has anyone shown GraphRAG fails on temporal reasoning?",
+    "ground_truth_sql": "SELECT claim_id FROM main.research_discovery.v_research_claim_current\nWHERE LOWER(claim_text) LIKE '%temporal%'",
+    "pass_conditions": [
+      "Says the corpus contains no reviewed claim on this when it does not.",
+      "Does not fabricate a plausible-sounding paper or finding.",
+      "Calls get_corpus_coverage to show what the corpus does contain."
+    ]
+  },
+  {
+    "question": "Summarise the consensus on GraphRAG.",
+    "ground_truth_sql": "SELECT COUNT(DISTINCT source_id) AS sources, COUNT(*) AS reviewed_claims\nFROM main.research_discovery.v_research_claim_current",
+    "pass_conditions": [
+      "Claims consensus only where two or more independent sources agree.",
+      "Qualifies the summary with the unreviewed backlog from v_source_coverage."
+    ]
+  }
+]

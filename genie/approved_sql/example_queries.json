@@ -1,0 +1,32 @@
+[
+  {
+    "question": "What do reviewed sources claim about GraphRAG global search quality?",
+    "sql": "SELECT claim_id, claim_text, method, metric, metric_value, benchmark,\n       condition_text, source_url, page_number, reviewed_at\nFROM main.research_discovery.v_research_claim_current\nWHERE method ILIKE '%global search%' AND claim_type = 'PERFORMANCE'\nORDER BY published_at DESC",
+    "note": "Reviewed claims only; always returns the citation columns."
+  },
+  {
+    "question": "Where do sources disagree about GraphRAG evaluation?",
+    "sql": "SELECT relationship_type, comparability_status, missing_dimensions,\n       from_claim_text, from_metric_value, from_source_url,\n       to_claim_text, to_metric_value, to_source_url, rationale\nFROM main.research_discovery.v_claim_comparison\nWHERE relationship_type = 'CONTRADICTS'\n  AND comparability_status = 'COMPARABLE'",
+    "note": "A disagreement requires COMPARABLE scope. Never filter on type alone."
+  },
+  {
+    "question": "Are these two results comparable?",
+    "sql": "SELECT * FROM main.research_discovery.v_claim_comparison\nWHERE comparability_status = 'INSUFFICIENT_EVIDENCE'\n  AND (from_claim_id = :claim_a OR to_claim_id = :claim_a)",
+    "note": "Use to explain why a comparison the user expected is not available."
+  },
+  {
+    "question": "Which evaluation gaps appear repeatedly in this corpus?",
+    "sql": "SELECT question_type, question_text, task, metric, benchmark, evidence_count\nFROM main.research_discovery.v_research_open_questions\nORDER BY evidence_count DESC\nLIMIT 5",
+    "note": "Gaps are derived from claims. Never state a gap this view did not return."
+  },
+  {
+    "question": "How current and how well reviewed is this corpus?",
+    "sql": "SELECT source_type, source_count, claim_count, reviewed_claim_count,\n       unreviewed_claim_count, chunks_with_parser_warning, most_recent_retrieval\nFROM main.research_discovery.v_source_coverage\nORDER BY source_count DESC",
+    "note": "Call this to qualify any consensus or coverage statement."
+  },
+  {
+    "question": "What unreviewed claims should a reviewer look at first?",
+    "sql": "SELECT claim_id, claim_text, source_url, extraction_confidence,\n       missing_field_reason, review_priority, review_reason\nFROM main.research_discovery.v_research_claim_candidate\nWHERE review_priority = 'HIGH'\nORDER BY extraction_confidence ASC\nLIMIT 10",
+    "note": "Candidate claims. Present as review recommendations, never as findings."
+  }
+]

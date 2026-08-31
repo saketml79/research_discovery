@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "research-discovery"
+version = "1.0.0"
+description = "Governed, claims-aware research discovery engine for Databricks Genie Agents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = []
+
+[project.optional-dependencies]
+# Runtime extras. Kept optional so the core package imports cleanly off-cluster
+# and every backend degrades to a clear "unavailable" error instead of an
+# ImportError at job start.
+pdf = ["pypdf>=4.2"]
+docling = ["docling>=2.0"]
+databricks = ["databricks-sdk>=0.30", "databricks-vectorsearch>=0.40"]
+schema = ["jsonschema>=4.21"]
+mcp = ["mcp>=1.2"]
+vision = ["PyMuPDF>=1.24"]
+ocr = ["pytesseract>=0.3.10", "Pillow>=10.3", "PyMuPDF>=1.24"]
+app = ["streamlit>=1.38", "databricks-sql-connector>=3.4"]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "ruff>=0.5",
+  "mypy>=1.10",
+  "build>=1.2",
+]
+
+[project.scripts]
+discover = "research_discovery.pipelines.discovery_job:main"
+ingest = "research_discovery.pipelines.ingest_job:main"
+volume-ingest = "research_discovery.pipelines.volume_ingest_job:main"
+benchmark = "research_discovery.pipelines.benchmark_job:main"
+extract = "research_discovery.pipelines.extract_job:main"
+supersede = "research_discovery.pipelines.supersede_job:main"
+relate = "research_discovery.pipelines.relate_job:main"
+index = "research_discovery.pipelines.index_job:main"
+deploy-agent = "research_discovery.pipelines.deploy_agent_job:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "ARG", "PTH", "RUF", "D"]
+ignore = [
+  "D203",   # incompatible with D211
+  "D213",   # incompatible with D212
+  "D401",   # imperative-mood docstrings are not always the clearest here
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D", "ARG"]
+
+[tool.mypy]
+python_version = "3.10"
+packages = ["research_discovery"]
+mypy_path = "src"
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+# Backends are resolved lazily and are absent off-cluster by design.
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["research_discovery"]
+omit = ["*/pipelines/*_job.py"]

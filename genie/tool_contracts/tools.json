@@ -1,0 +1,66 @@
+{
+  "version": "2026.08.1",
+  "description": "Tool contracts for the Research Discovery Genie Agent. Every retrieval tool is read-only; the only writing path creates PENDING_APPROVAL proposals and cannot mutate corpus or platform state.",
+  "tools": [
+    {
+      "name": "search_claims",
+      "kind": "unity_catalog_function",
+      "access": "READ_ONLY",
+      "reads": ["v_research_claim_current"],
+      "parameters": ["query_text", "task_filter", "method_filter", "benchmark_filter", "max_results"],
+      "returns": "Reviewed claims with claim_id, scope fields, evidence_excerpt, source_url, page_number, reviewed_at",
+      "guarantee": "Cannot return an unreviewed or superseded claim."
+    },
+    {
+      "name": "compare_claims",
+      "kind": "unity_catalog_function",
+      "access": "READ_ONLY",
+      "reads": ["v_research_claim_current"],
+      "parameters": ["claim_id_a", "claim_id_b"],
+      "returns": "comparability_status, comparability_score, missing_dimensions, both claim texts and values, verdict_note",
+      "guarantee": "Deterministic. The agent must call this before asserting agreement or disagreement."
+    },
+    {
+      "name": "get_claim_evidence",
+      "kind": "unity_catalog_function",
+      "access": "READ_ONLY",
+      "reads": ["research_claim", "research_chunk", "research_source", "research_source_version"],
+      "parameters": ["claim_id"],
+      "returns": "Excerpt, originating chunk, parser and parser warning, source metadata, retrieval time, review decision",
+      "guarantee": "Provenance only; surfaces parser warnings so an answer can be qualified."
+    },
+    {
+      "name": "get_open_questions",
+      "kind": "unity_catalog_function",
+      "access": "READ_ONLY",
+      "reads": ["v_research_open_questions"],
+      "parameters": ["topic_filter", "max_results"],
+      "returns": "question_type, question_text, scope, evidence_count, claim_ids",
+      "guarantee": "Every gap is derived from counted claims. The agent may not state a gap this did not return."
+    },
+    {
+      "name": "get_corpus_coverage",
+      "kind": "unity_catalog_function",
+      "access": "READ_ONLY",
+      "reads": ["v_source_coverage"],
+      "parameters": [],
+      "returns": "Source counts, reviewed and unreviewed claim counts, parser-warning count, retrieval freshness",
+      "guarantee": "Used to qualify any consensus or coverage statement."
+    },
+    {
+      "name": "create_proposal",
+      "kind": "tool_endpoint",
+      "access": "WRITE_PROPOSAL_ONLY",
+      "writes": ["agent_proposal"],
+      "parameters": ["proposal_type", "payload_json", "rationale", "investigation_id"],
+      "returns": "Confirmation that a PENDING_APPROVAL record was created",
+      "guarantee": "Inserts status='PENDING_APPROVAL' only. Payload validation rejects any claim id that did not appear in this turn's tool output. No approval or execution path exists in this project."
+    }
+  ],
+  "explicitly_absent_tools": [
+    "Any tool that approves a proposal",
+    "Any tool that changes a claim's review_status",
+    "Any tool that writes to research_claim, research_source or research_chunk",
+    "Any tool that grants permissions, deploys code, or calls an unapproved external API"
+  ]
+}

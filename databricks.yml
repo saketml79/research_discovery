@@ -1,0 +1,103 @@
+bundle:
+  name: research-discovery
+
+variables:
+  catalog:
+    description: Unity Catalog catalog holding the Research Discovery schema.
+    default: main
+  schema:
+    description: Schema holding source, chunk, claim and review tables.
+    default: research_discovery
+  volume:
+    description: UC volume for raw source documents (PDFs, HTML snapshots).
+    default: raw_sources
+  warehouse_id:
+    description: SQL warehouse id used by the Genie Agent and SQL tasks.
+    lookup:
+      warehouse: ${var.warehouse_name}
+  warehouse_name:
+    description: SQL warehouse name resolved into warehouse_id.
+    default: Serverless Starter Warehouse
+  topic:
+    description: Corpus topic slug used for seed data and Genie naming.
+    default: graphrag_evaluation
+  parser:
+    description: Parser adapter - pypdf | docling | ai_parse_document.
+    default: pypdf
+  extractor:
+    description: Claim extractor adapter - llm | ai_extract | heuristic.
+    default: llm
+  extraction_model:
+    description: Foundation-model serving endpoint used for claim extraction.
+    default: databricks-claude-sonnet-4-5
+  ai_search_endpoint:
+    description: AI Search / Vector Search endpoint name (optional).
+    default: ""
+  notifications_email:
+    description: Address notified on job failure.
+    default: ""
+  service_principal_name:
+    description: Service principal that production jobs run as.
+    default: ""
+  genie_space_id:
+    description: Deployed Genie space id, used by the benchmark job.
+    default: ""
+  contact_email:
+    description: >-
+      Contact address sent to the scholarly metadata APIs. OpenAlex and arXiv ask
+      callers to identify themselves and grant a higher rate limit when they do.
+    default: ""
+  semantic_scholar_key:
+    description: >-
+      Semantic Scholar API key. Optional; without it that provider is skipped,
+      because its unauthenticated rate limit is too low for a sweep.
+    default: ""
+  rss_feeds:
+    description: Comma-separated Atom/RSS feeds for practitioner blogs.
+    default: ""
+
+include:
+  - resources/*.yml
+
+artifacts:
+  research_discovery:
+    type: whl
+    build: python -m build --wheel
+    path: .
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: ${workspace.host}
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      catalog: main
+      schema: research_discovery_dev
+
+  staging:
+    mode: production
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      schema: research_discovery_staging
+    permissions:
+      - level: CAN_MANAGE
+        group_name: data-platform-admins
+      - level: CAN_VIEW
+        group_name: data-platform-readers
+
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      schema: research_discovery
+    permissions:
+      - level: CAN_MANAGE
+        group_name: data-platform-admins
+      - level: CAN_VIEW
+        group_name: data-platform-readers
+    run_as:
+      service_principal_name: ${var.service_principal_name}

@@ -1,0 +1,9 @@
+command: ["streamlit", "run", "app/app.py", "--server.port", "8000", "--server.address", "0.0.0.0"]
+
+env:
+  - name: RD_CATALOG
+    valueFrom: catalog
+  - name: RD_SCHEMA
+    valueFrom: schema
+  - name: DATABRICKS_HTTP_PATH
+    valueFrom: sql_warehouse_http_path

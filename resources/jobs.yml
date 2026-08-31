@@ -1,0 +1,268 @@
+resources:
+  jobs:
+    research_discovery_bootstrap:
+      name: "[${bundle.target}] Research Discovery :: bootstrap"
+      description: >-
+        Creates the schema, volume, tables, views and UC function tools, then
+        seeds the controlled demo scenario. Idempotent - safe to re-run.
+      tags:
+        project: research-discovery
+        stage: bootstrap
+      tasks:
+        - task_key: create_schema
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../sql/ddl/001_schema.sql
+            parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              volume: ${var.volume}
+
+        - task_key: create_tables
+          depends_on: [{ task_key: create_schema }]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../sql/ddl/002_tables.sql
+            parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+
+        - task_key: create_views
+          depends_on: [{ task_key: create_tables }]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../sql/ddl/003_views.sql
+            parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+
+        - task_key: create_functions
+          depends_on: [{ task_key: create_views }]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../sql/functions/tools.sql
+            parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+
+        - task_key: create_discovery_tables
+          depends_on: [{ task_key: create_views }]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../sql/ddl/004_discovery.sql
+            parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+
+        - task_key: seed_demo
+          depends_on: [{ task_key: create_functions }, { task_key: create_discovery_tables }]
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../seeds/demo_seed.sql
+            parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+
+    research_discovery_pipeline:
+      name: "[${bundle.target}] Research Discovery :: corpus pipeline"
+      description: >-
+        Ingest, parse, chunk, extract claims, build the review queue, relate
+        reviewed claims, and sync the retrieval index. Every stage is idempotent.
+      tags:
+        project: research-discovery
+        stage: pipeline
+      schedule:
+        quartz_cron_expression: "0 0 6 ? * MON"
+        timezone_id: UTC
+        pause_status: PAUSED
+      email_notifications:
+        on_failure:
+          - ${var.notifications_email}
+      max_concurrent_runs: 1
+      queue:
+        enabled: true
+      job_clusters:
+        - job_cluster_key: pipeline
+          new_cluster:
+            spark_version: "15.4.x-scala2.12"
+            data_security_mode: SINGLE_USER
+            num_workers: 1
+            node_type_id: "{{node_type_id}}"
+            spark_env_vars:
+              RD_CATALOG: ${var.catalog}
+              RD_SCHEMA: ${var.schema}
+      tasks:
+        - task_key: discover
+          job_cluster_key: pipeline
+          max_retries: 1
+          description: >-
+            Sweep standing queries against the scholarly metadata APIs. Records
+            candidates; does not fetch or extract anything.
+          python_wheel_task:
+            package_name: research_discovery
+            entry_point: discover
+            parameters:
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+          libraries:
+            - whl: ../dist/*.whl
+
+        - task_key: volume_ingest
+          job_cluster_key: pipeline
+          max_retries: 2
+          description: >-
+            Auto Loader pass over the raw-sources volume, for PDFs a human
+            dropped in rather than ones discovery found.
+          python_wheel_task:
+            package_name: research_discovery
+            entry_point: volume-ingest
+            parameters:
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+              - --volume=${var.volume}
+              - --parser=${var.parser}
+          libraries:
+            - whl: ../dist/*.whl
+
+        - task_key: ingest
+          depends_on: [{ task_key: discover }]
+          job_cluster_key: pipeline
+          max_retries: 2
+          min_retry_interval_millis: 30000
+          python_wheel_task:
+            package_name: research_discovery
+            entry_point: ingest
+            parameters:
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+              - --volume=${var.volume}
+              - --parser=${var.parser}
+              - --seed-path=../seeds/sources.csv
+          libraries:
+            - whl: ../dist/*.whl
+
+        - task_key: extract
+          depends_on: [{ task_key: ingest }, { task_key: volume_ingest }]
+          job_cluster_key: pipeline
+          max_retries: 2
+          python_wheel_task:
+            package_name: research_discovery
+            entry_point: extract
+            parameters:
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+              - --extractor=${var.extractor}
+              - --extraction-model=${var.extraction_model}
+          libraries:
+            - whl: ../dist/*.whl
+
+        - task_key: supersede
+          depends_on: [{ task_key: extract }]
+          job_cluster_key: pipeline
+          description: >-
+            Queue reviewed claims for re-review where their source has a newer
+            version. Supersedes nothing on its own - a reviewer decides.
+          python_wheel_task:
+            package_name: research_discovery
+            entry_point: supersede
+            parameters:
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+          libraries:
+            - whl: ../dist/*.whl
+
+        - task_key: relate
+          depends_on: [{ task_key: supersede }]
+          job_cluster_key: pipeline
+          python_wheel_task:
+            package_name: research_discovery
+            entry_point: relate
+            parameters:
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+          libraries:
+            - whl: ../dist/*.whl
+
+        - task_key: index
+          depends_on: [{ task_key: relate }]
+          job_cluster_key: pipeline
+          python_wheel_task:
+            package_name: research_discovery
+            entry_point: index
+            parameters:
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+              - --ai-search-endpoint=${var.ai_search_endpoint}
+          libraries:
+            - whl: ../dist/*.whl
+
+    research_discovery_deploy_agent:
+      name: "[${bundle.target}] Research Discovery :: deploy Genie Agent"
+      description: >-
+        Validates the Genie Agent configuration and creates or updates the
+        agent. Fails before any API call when validation fails.
+      tags:
+        project: research-discovery
+        stage: agent
+      tasks:
+        - task_key: deploy_agent
+          environment_key: default
+          python_wheel_task:
+            package_name: research_discovery
+            entry_point: deploy-agent
+            parameters:
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+              - --warehouse-id=${var.warehouse_id}
+      environments:
+        - environment_key: default
+          spec:
+            client: "3"
+            dependencies:
+              - ../dist/*.whl
+
+    research_discovery_benchmark:
+      name: "[${bundle.target}] Research Discovery :: agent benchmarks"
+      description: >-
+        Runs the benchmark suite against the deployed Genie Agent through the
+        Genie Agents API and grades behaviour, not wording. Fails when a
+        behavioural property regresses.
+      tags:
+        project: research-discovery
+        stage: evaluation
+      tasks:
+        - task_key: benchmark
+          environment_key: default
+          python_wheel_task:
+            package_name: research_discovery
+            entry_point: benchmark
+            parameters:
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+              - --space-id=${var.genie_space_id}
+      environments:
+        - environment_key: default
+          spec:
+            client: "3"
+            dependencies:
+              - ../dist/*.whl
+
+  apps:
+    research_review:
+      name: "research-review-${bundle.target}"
+      description: >-
+        Claim review workstation. The review queue is the boundary between
+        extracted candidate knowledge and what the agent may assert; this app is
+        what makes that boundary usable.
+      source_code_path: ../app
+      resources:
+        - name: sql_warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
