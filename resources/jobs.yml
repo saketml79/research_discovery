@@ -256,6 +256,11 @@ resources:
         extracted candidate knowledge and what the agent may assert; this app is
         what makes that boundary usable.
       source_code_path: ..
+      # On-behalf-of-user (OBO) auth: every query runs as the signed-in reviewer,
+      # under their own Unity Catalog grants. No permission needs to be granted
+      # to the app's own service principal.
+      user_api_scopes:
+        - sql
       resources:
         - name: sql_warehouse
           sql_warehouse:

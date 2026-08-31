@@ -48,26 +48,45 @@ PRIORITY_BADGE: dict[str, str] = {
 
 
 @st.cache_resource(show_spinner="Connecting to the SQL warehouse (a cold start can take up to a minute)…")
-def get_connection() -> Any:
-    """Open a SQL warehouse connection, authenticated as the app's service principal.
+def _connect(user_token: str) -> Any:
+    """Open a SQL warehouse connection as the given user's OAuth token.
 
-    Databricks Apps do not set a static ``DATABRICKS_TOKEN``; they inject OAuth
-    client credentials for the app's own service principal. The SDK's ``Config``
-    resolves those automatically, so auth here must go through it rather than a
-    hand-rolled ``access_token``.
+    Cache-keyed on the token itself, so each signed-in user gets their own
+    connection object rather than reusing another user's session.
     """
     from databricks import sql  # noqa: PLC0415
-    from databricks.sdk.core import Config as SdkConfig  # noqa: PLC0415
 
-    cfg = SdkConfig()
     http_path = os.environ.get("DATABRICKS_HTTP_PATH") or (
         f"/sql/1.0/warehouses/{os.environ['DATABRICKS_WAREHOUSE_ID']}"
     )
     return sql.connect(
-        server_hostname=cfg.host.replace("https://", ""),
+        server_hostname=os.environ["DATABRICKS_HOST"].replace("https://", ""),
         http_path=http_path,
-        credentials_provider=lambda: cfg.authenticate,
+        access_token=user_token,
     )
+
+
+def get_user_token() -> str | None:
+    """The signed-in user's forwarded OAuth token (on-behalf-of / OBO auth).
+
+    Requires the app to declare the ``sql`` user-authorization scope. Every
+    query then runs as the user, enforced by their own Unity Catalog grants -
+    no permission ever needs to be granted to the app's own service principal.
+    """
+    header = st.context.headers if hasattr(st, "context") else {}
+    return header.get("x-forwarded-access-token") or os.environ.get("DATABRICKS_TOKEN")
+
+
+def get_connection() -> Any:
+    """Open a SQL warehouse connection authenticated as the signed-in user."""
+    token = get_user_token()
+    if not token:
+        raise RuntimeError(
+            "No user OAuth token was forwarded to this app. This app requires the 'sql' "
+            "user-authorization scope to be enabled (Databricks workspace -> Apps -> "
+            "research-review-dev -> Authorization), and you must grant consent on first visit."
+        )
+    return _connect(token)
 
 
 def query(statement: str, parameters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
