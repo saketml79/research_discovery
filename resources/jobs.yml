@@ -264,6 +264,7 @@ resources:
       # to the app's own service principal.
       user_api_scopes:
         - sql
+        - genie
       resources:
         - name: sql_warehouse
           sql_warehouse:

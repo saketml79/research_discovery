@@ -126,6 +126,30 @@ def genie_space_url() -> str | None:
     return f"{host.rstrip('/')}/genie/rooms/{space_id}"
 
 
+@st.cache_resource(show_spinner=False)
+def _genie_client(user_token: str, space_id: str) -> Any:
+    """Build a Genie Agent client authenticated as the signed-in user (OBO).
+
+    Requires the app's ``genie`` user-authorization scope, in addition to ``sql``.
+    """
+    from databricks.sdk import WorkspaceClient  # noqa: PLC0415
+
+    from research_discovery.agent.client import GenieAgentClient, WorkspaceGenieConversationApi
+
+    workspace_client = WorkspaceClient(host=os.environ["DATABRICKS_HOST"], token=user_token)
+    api = WorkspaceGenieConversationApi(workspace_client)
+    return GenieAgentClient(api, space_id)
+
+
+def get_genie_client() -> Any | None:
+    """The Genie client for the current user, or None if not configured."""
+    space_id = os.environ.get("RD_GENIE_SPACE_ID")
+    token = get_user_token()
+    if not space_id or not token:
+        return None
+    return _genie_client(token, space_id)
+
+
 def reviewer_identity() -> str:
     """Identify the reviewer for the audit trail (never shown in the UI as-is).
 
@@ -238,6 +262,34 @@ def fetch_discovery_freshness(_config: Config) -> list[dict[str, Any]]:
         )
     except Exception:  # noqa: BLE001 - the view is optional in some deployments
         return []
+
+
+#: Tables/views a curator may browse directly, with a sensible default sort.
+EXPLORABLE_TABLES: dict[str, str] = {
+    "research_claim": "claim_id",
+    "research_source": "source_id",
+    "research_chunk": "chunk_id",
+    "research_claim_relationship": "relationship_id",
+    "research_review_queue": "review_id",
+}
+
+
+def fetch_table(config: Config, table_name: str, *, search: str, limit: int) -> list[dict[str, Any]]:
+    """Load rows from an explorable table, optionally filtered by a text search."""
+    order_by = EXPLORABLE_TABLES[table_name]
+    full_table = config.table(table_name)
+    if not search:
+        return query(f"SELECT * FROM {full_table} ORDER BY {order_by} DESC LIMIT {int(limit)}")
+    columns = [c["col_name"] for c in query(f"DESCRIBE TABLE {full_table}") if not c["col_name"].startswith("#")]
+    text_columns = [
+        c for c in columns
+        if c not in ("metric_value", "extraction_confidence", "page_number", "chunk_index")
+    ]
+    predicate = " OR ".join(f"CAST({c} AS STRING) ILIKE :needle" for c in text_columns)
+    return query(
+        f"SELECT * FROM {full_table} WHERE {predicate} ORDER BY {order_by} DESC LIMIT {int(limit)}",
+        {"needle": f"%{search}%"},
+    )
 
 
 def record_decision(
@@ -571,24 +623,115 @@ def render_open_questions_tab(config: Config) -> None:
 
 
 # ---------------------------------------------------------------------------
+# UI — data explorer
+# ---------------------------------------------------------------------------
+
+
+def render_data_explorer_tab(config: Config) -> None:
+    """Raw table access: pick a table, optionally filter, click Load."""
+    st.caption("Direct, read-only access to the corpus tables backing the agent and the queue above.")
+    top = st.columns([2, 3, 1, 1])
+    table_name = top[0].selectbox("Table", list(EXPLORABLE_TABLES), key="explorer_table")
+    search = top[1].text_input("Filter (matches any text column)", key="explorer_search")
+    limit = top[2].number_input("Rows", min_value=10, max_value=2000, value=200, step=10, key="explorer_limit")
+    load = top[3].button("Load", type="primary", use_container_width=True)
+
+    state_key = f"explorer_result:{table_name}"
+    if load:
+        with st.spinner("Querying..."):
+            try:
+                st.session_state[state_key] = fetch_table(config, table_name, search=search, limit=int(limit))
+            except Exception as exc:  # noqa: BLE001 - shown inline, not a page crash
+                logger.exception("data explorer query failed")
+                st.session_state[state_key] = None
+                st.error(f"Query failed: {exc}")
+
+    rows = st.session_state.get(state_key)
+    if rows is None:
+        st.info("Choose a table and click Load.")
+    elif not rows:
+        st.info("No rows matched.")
+    else:
+        st.caption(f"{len(rows)} row(s)")
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
+# ---------------------------------------------------------------------------
 # app entry point
 # ---------------------------------------------------------------------------
 
 
+#: Starting points for a curator who doesn't yet know what the corpus can answer.
+SAMPLE_QUESTIONS = (
+    "What reviewed claims do we have about GraphRAG's token cost?",
+    "Which claims contradict each other?",
+    "What open questions has the corpus surfaced?",
+    "Summarize what is known about HippoRAG's retrieval performance.",
+)
+
+
 def render_genie_panel() -> None:
-    """The primary surface: a direct link into the deployed Genie Agent chat."""
-    url = genie_space_url()
+    """The primary surface: an embedded chat against the deployed Genie Agent,
+    authenticated as the signed-in user (OBO) - the same Genie Space you'd reach
+    through the Databricks workspace UI, run from inside this page.
+    """
     st.markdown('<div class="rd-genie-panel">', unsafe_allow_html=True)
     st.markdown("#### Ask the research agent")
     st.caption(
-        "The Genie Agent answers questions in plain English over the reviewed claims "
-        "corpus, with citations. It runs as its own Databricks Genie Space, not inside "
-        "this page - open it directly:"
+        "Answers cite claim records and source URLs, and refuse to compare claims whose "
+        "scope doesn't overlap. Backed by the same reviewed-claims corpus as the workstation below."
     )
+
+    client = get_genie_client()
+    url = genie_space_url()
+    if client is None:
+        st.warning(
+            "Genie chat isn't available from inside this page (RD_GENIE_SPACE_ID missing, or the "
+            "app's 'genie' authorization scope hasn't been granted yet)."
+        )
+        if url:
+            st.markdown(f'<a class="rd-genie-link" href="{url}" target="_blank">Open Genie agent</a>', unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    history: list[dict[str, str]] = st.session_state.setdefault("genie_history", [])
+    for turn in history:
+        with st.chat_message(turn["role"]):
+            st.markdown(turn["content"])
+
+    if not history:
+        st.caption("Try asking:")
+        cols = st.columns(len(SAMPLE_QUESTIONS))
+        for col, sample in zip(cols, SAMPLE_QUESTIONS):
+            if col.button(sample, key=f"sample:{sample}", use_container_width=True):
+                st.session_state["genie_pending_question"] = sample
+                st.rerun()
+
+    question = st.chat_input("Ask a question about the reviewed corpus")
+    pending = st.session_state.pop("genie_pending_question", None)
+    question = question or pending
+    if question:
+        history.append({"role": "user", "content": question})
+        with st.spinner("Genie is thinking..."):
+            turn = client.ask(question, conversation_id=st.session_state.get("genie_conversation_id"))
+        if turn.conversation_id:
+            st.session_state["genie_conversation_id"] = turn.conversation_id
+        if turn.error:
+            answer = f"Genie could not answer: {turn.error}"
+        else:
+            answer = turn.text or "(no answer text returned)"
+            if turn.queries:
+                answer += "\n\n---\n" + "\n".join(f"`{q}`" for q in turn.queries)
+        history.append({"role": "assistant", "content": answer})
+        st.rerun()
+
+    cols = st.columns([1, 5])
+    if history and cols[0].button("New conversation"):
+        st.session_state["genie_history"] = []
+        st.session_state.pop("genie_conversation_id", None)
+        st.rerun()
     if url:
-        st.markdown(f'<a class="rd-genie-link" href="{url}" target="_blank">Open Genie agent</a>', unsafe_allow_html=True)
-    else:
-        st.warning("RD_GENIE_SPACE_ID is not configured for this deployment.")
+        cols[1].markdown(f'<a class="rd-genie-link" href="{url}" target="_blank">Open in full Genie UI</a>', unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -629,14 +772,16 @@ def main() -> None:
             "- **Corpus overview** - how big the corpus is and how much of it is actually "
             "reviewed vs. still pending.\n"
             "- **Open questions** - evidence-backed gaps the corpus has found in itself.\n"
+            "- **Data explorer** - browse the raw corpus tables directly: pick a table, "
+            "optionally filter, click Load.\n"
             "- Amending never rewrites what a source claims to have found - only the scope "
             "fields (task, method, metric, benchmark, condition) that decide what it may be "
             "compared against."
         )
 
     try:
-        tab_queue, tab_overview, tab_questions = st.tabs(
-            ["Review queue", "Corpus overview", "Open questions"]
+        tab_queue, tab_overview, tab_questions, tab_explorer = st.tabs(
+            ["Review queue", "Corpus overview", "Open questions", "Data explorer"]
         )
         with tab_queue:
             render_queue_tab(config, priority, reviewer)
@@ -644,6 +789,8 @@ def main() -> None:
             render_overview_tab(config)
         with tab_questions:
             render_open_questions_tab(config)
+        with tab_explorer:
+            render_data_explorer_tab(config)
     except Exception as exc:  # noqa: BLE001 - surfaced as a retry-able connection error
         render_connection_error(exc)
 
