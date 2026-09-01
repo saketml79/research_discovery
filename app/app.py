@@ -364,17 +364,88 @@ def record_decision(
 
 
 def inject_style() -> None:
-    """Plain, dense styling: no emoji, small type, minimal colour."""
+    """A real visual system: a consistent palette, card shadows on every
+    bordered container, rounded pill tabs/buttons and chat-bubble styling -
+    rather than the previous flat, unstyled defaults.
+    """
     st.markdown(
         """
         <style>
-        .block-container {padding-top: 1.5rem; max-width: 1100px;}
-        div[data-testid="stMetricValue"] {font-size: 1.3rem;}
-        .rd-claim-text {font-size: 1rem; font-weight: 600; line-height: 1.4;}
-        .rd-caption {color: #6b7280; font-size: 0.82rem;}
-        .rd-badge-high {color: #b91c1c; font-weight: 600;}
-        .rd-badge-normal {color: #92400e; font-weight: 600;}
-        .rd-badge-low {color: #6b7280; font-weight: 600;}
+        :root {
+            --rd-accent: #4f46e5;
+            --rd-accent-dark: #4338ca;
+            --rd-bg: #f6f7fb;
+            --rd-card: #ffffff;
+            --rd-border: #e5e7eb;
+            --rd-text: #111827;
+            --rd-muted: #6b7280;
+            --rd-shadow: 0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06);
+        }
+        .stApp {background: var(--rd-bg);}
+        .block-container {padding-top: 2rem; max-width: 1100px;}
+        h1, h2, h3, h4 {color: var(--rd-text); letter-spacing: -0.01em;}
+
+        div[data-testid="stMetricValue"] {font-size: 1.4rem; font-weight: 700; color: var(--rd-text);}
+        div[data-testid="stMetric"] {
+            background: var(--rd-card); border-radius: 14px; padding: 0.9rem 1.1rem;
+            box-shadow: var(--rd-shadow); border: 1px solid var(--rd-border);
+        }
+
+        /* Any bordered st.container - the one legal way to draw a real card,
+           since Streamlit can't nest HTML written across separate calls. */
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            border-radius: 16px !important; border: 1px solid var(--rd-border) !important;
+            box-shadow: var(--rd-shadow); background: var(--rd-card);
+        }
+
+        /* Buttons: one consistent pill style, accent on primary/submit. */
+        .stButton > button, .stFormSubmitButton > button, .stLinkButton > a {
+            border-radius: 10px !important; border: 1px solid var(--rd-border) !important;
+            font-weight: 600; transition: all 0.15s ease;
+        }
+        .stButton > button:hover, .stFormSubmitButton > button:hover, .stLinkButton > a:hover {
+            border-color: var(--rd-accent) !important; color: var(--rd-accent) !important;
+        }
+        .stFormSubmitButton > button {
+            background: var(--rd-accent) !important; color: #fff !important; border: none !important;
+        }
+        .stFormSubmitButton > button:hover {background: var(--rd-accent-dark) !important; color: #fff !important;}
+        .stLinkButton > a {background: var(--rd-text) !important; color: #fff !important; border: none !important;}
+        .stLinkButton > a:hover {color: #fff !important; opacity: 0.85;}
+
+        /* Pill-style tabs instead of the flat default underline tabs. */
+        button[data-baseweb="tab"] {
+            border-radius: 999px !important; padding: 0.35rem 1.1rem !important;
+            font-weight: 600; color: var(--rd-muted);
+        }
+        button[data-baseweb="tab"][aria-selected="true"] {
+            background: var(--rd-accent) !important; color: #fff !important;
+        }
+        div[data-baseweb="tab-highlight"] {display: none;}
+        div[data-baseweb="tab-border"] {display: none;}
+
+        /* Chat bubbles: rounded cards with a soft shadow, distinct per role. */
+        div[data-testid="stChatMessage"] {
+            border-radius: 14px; padding: 0.6rem 0.9rem; margin-bottom: 0.5rem;
+            box-shadow: var(--rd-shadow); border: 1px solid var(--rd-border);
+        }
+        div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarUser"]) {
+            background: #eef2ff;
+        }
+
+        div[data-testid="stTextInput"] input, div[data-testid="stSelectbox"] > div {
+            border-radius: 10px !important;
+        }
+
+        .rd-claim-text {font-size: 1rem; font-weight: 700; line-height: 1.4; color: var(--rd-text);}
+        .rd-caption {color: var(--rd-muted); font-size: 0.82rem;}
+        .rd-badge {
+            display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px;
+            font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em;
+        }
+        .rd-badge-high {color: #b91c1c; background: #fee2e2;}
+        .rd-badge-normal {color: #92400e; background: #fef3c7;}
+        .rd-badge-low {color: #374151; background: #f3f4f6;}
         </style>
         """,
         unsafe_allow_html=True,
@@ -435,7 +506,7 @@ def render_claim(config: Config, item: dict[str, Any], reviewer: str) -> None:
             unsafe_allow_html=True,
         )
     with header_right:
-        st.markdown(f"<span class='{badge_class}'>{badge}</span>", unsafe_allow_html=True)
+        st.markdown(f"<span class='rd-badge {badge_class}'>{badge}</span>", unsafe_allow_html=True)
         confidence = item.get("extraction_confidence")
         st.metric("Extractor confidence", f"{confidence:.0%}" if confidence is not None else "n/a")
 
