@@ -55,6 +55,7 @@ class AgentTurn:
         tools_called: Names of UC functions and tools invoked, inferred from the
             generated SQL and any tool attachments.
         rows: Result rows returned to the agent, per attachment.
+        columns: Column names for ``rows``, when the query result exposed a schema.
         state: Terminal conversation state.
         conversation_id: For follow-up turns.
         message_id: The message this turn corresponds to.
@@ -66,6 +67,7 @@ class AgentTurn:
     queries: list[str] = field(default_factory=list)
     tools_called: list[str] = field(default_factory=list)
     rows: list[list[Any]] = field(default_factory=list)
+    columns: list[str] = field(default_factory=list)
     state: str = "UNKNOWN"
     conversation_id: str = ""
     message_id: str = ""
@@ -235,9 +237,10 @@ class GenieAgentClient:
                 turn.tools_called.extend(_functions_in(str(statement)))
                 attachment_id = str(attachment.get("attachment_id") or attachment.get("id") or "")
                 if attachment_id:
-                    turn.rows.extend(
-                        self._fetch_rows(conversation_id, message_id, attachment_id)
-                    )
+                    columns, rows = self._fetch_rows(conversation_id, message_id, attachment_id)
+                    turn.rows.extend(rows)
+                    if columns and not turn.columns:
+                        turn.columns = columns
 
             tool_part = attachment.get("tool_call") or attachment.get("tool") or {}
             if tool_part.get("name"):
@@ -251,16 +254,21 @@ class GenieAgentClient:
 
     def _fetch_rows(
         self, conversation_id: str, message_id: str, attachment_id: str
-    ) -> list[list[Any]]:
+    ) -> tuple[list[str], list[list[Any]]]:
         try:
             result = self._api.get_query_result(
                 self._space_id, conversation_id, message_id, attachment_id
             )
         except Exception as exc:  # noqa: BLE001 - a missing result is not fatal
             logger.warning("could not fetch query result %s: %s", attachment_id, exc)
-            return []
-        data = (result.get("statement_response") or result).get("result") or {}
-        return [list(row) for row in (data.get("data_array") or [])]
+            return [], []
+        statement_response = result.get("statement_response") or result
+        data = statement_response.get("result") or {}
+        manifest = statement_response.get("manifest") or {}
+        schema = manifest.get("schema") or {}
+        columns = [str(c.get("name")) for c in (schema.get("columns") or []) if c.get("name")]
+        rows = [list(row) for row in (data.get("data_array") or [])]
+        return columns, rows
 
 
 #: UC functions the agent may call. Used to read a tool trace out of generated SQL.

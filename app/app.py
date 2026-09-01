@@ -760,9 +760,10 @@ def render_genie_panel() -> None:
             st.link_button("Open Genie agent", url)
         return
 
-    history: list[dict[str, str]] = st.session_state.setdefault("genie_history", [])
+    history: list[dict[str, Any]] = st.session_state.setdefault("genie_history", [])
     pending = st.session_state.pop("genie_pending_question", None)
-    busy = st.session_state.get("genie_busy", False)
+    inflight = st.session_state.get("genie_inflight_question")
+    busy = inflight is not None
 
     with st.container(border=True):
         if not history:
@@ -777,6 +778,15 @@ def render_genie_panel() -> None:
             for turn in history:
                 with st.chat_message(turn["role"]):
                     st.markdown(turn["content"])
+                    if turn.get("rows"):
+                        st.dataframe(
+                            turn["rows"], use_container_width=True, hide_index=True,
+                            column_config=None,
+                        )
+                    if turn.get("queries"):
+                        with st.expander("SQL Genie ran"):
+                            for query in turn["queries"]:
+                                st.code(query, language="sql")
 
         with st.form("genie_ask_form", clear_on_submit=True, border=False):
             input_cols = st.columns([5, 1])
@@ -786,33 +796,48 @@ def render_genie_panel() -> None:
             )
             asked = input_cols[1].form_submit_button("Ask", use_container_width=True, disabled=busy)
 
-        if pending or (asked and question and not busy):
+        # Two-phase ask: first rerun shows the question + a disabled/busy UI,
+        # the *next* run does the actual (slow) Genie call and appends the
+        # answer - a single-pass "set busy then immediately clear it" never
+        # reaches the browser, since Streamlit only repaints between reruns.
+        if not busy and (pending or (asked and question)):
             question = pending or question
             history.append({"role": "user", "content": question})
-            with st.chat_message("user"):
-                st.markdown(question)
-            st.session_state["genie_busy"] = True
-            try:
+            st.session_state["genie_inflight_question"] = question
+            st.rerun()
+
+        if busy:
+            with st.chat_message("assistant"):
                 with st.spinner("Genie is thinking..."):
-                    turn = client.ask(
-                        question, conversation_id=st.session_state.get("genie_conversation_id")
-                    )
-            except Exception as exc:  # noqa: BLE001 - never crash the whole page over one turn
-                logger.exception("genie ask failed")
-                answer = f"Genie could not answer: {exc}"
-                turn = None
-            else:
-                if turn.conversation_id:
-                    st.session_state["genie_conversation_id"] = turn.conversation_id
-                answer = (
-                    f"Genie could not answer: {turn.error}"
-                    if turn.error
-                    else (turn.text or "(no answer text returned)")
-                )
-                if turn and not turn.error and turn.queries:
-                    answer += "\n\n---\n" + "\n".join(f"`{q}`" for q in turn.queries)
-            history.append({"role": "assistant", "content": answer})
-            st.session_state["genie_busy"] = False
+                    try:
+                        turn = client.ask(
+                            inflight, conversation_id=st.session_state.get("genie_conversation_id")
+                        )
+                    except Exception as exc:  # noqa: BLE001 - never crash the page over one turn
+                        logger.exception("genie ask failed")
+                        entry: dict[str, Any] = {
+                            "role": "assistant",
+                            "content": f"Genie could not answer: {exc}",
+                        }
+                    else:
+                        if turn.conversation_id:
+                            st.session_state["genie_conversation_id"] = turn.conversation_id
+                        answer = (
+                            f"Genie could not answer: {turn.error}"
+                            if turn.error
+                            else (turn.text or "(no answer text returned)")
+                        )
+                        entry = {"role": "assistant", "content": answer}
+                        if not turn.error and turn.rows:
+                            entry["rows"] = (
+                                [dict(zip(turn.columns, row)) for row in turn.rows]
+                                if turn.columns
+                                else turn.rows
+                            )
+                        if not turn.error and turn.queries:
+                            entry["queries"] = turn.queries
+            history.append(entry)
+            st.session_state.pop("genie_inflight_question", None)
             st.rerun()
 
     cols = st.columns([1, 5])
