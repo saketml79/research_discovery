@@ -382,20 +382,31 @@ def inject_style() -> None:
             --rd-shadow: 0 1px 2px rgba(16,24,40,.04), 0 4px 12px rgba(16,24,40,.06);
         }
         .stApp {background: var(--rd-bg);}
-        .block-container {padding-top: 2rem; max-width: 1100px;}
+        .block-container {padding-top: 1rem; max-width: 1100px;}
         h1, h2, h3, h4 {color: var(--rd-text); letter-spacing: -0.01em;}
+
+        .rd-hero {
+            background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+            border-radius: 20px; padding: 1.6rem 2rem; margin-bottom: 1.5rem;
+            box-shadow: 0 8px 24px rgba(79,70,229,.25);
+        }
+        .rd-hero h1 {color: #fff; margin: 0; font-size: 1.9rem;}
+        .rd-hero p {color: #e0e7ff; margin: 0.3rem 0 0; font-size: 0.92rem;}
 
         div[data-testid="stMetricValue"] {font-size: 1.4rem; font-weight: 700; color: var(--rd-text);}
         div[data-testid="stMetric"] {
             background: var(--rd-card); border-radius: 14px; padding: 0.9rem 1.1rem;
             box-shadow: var(--rd-shadow); border: 1px solid var(--rd-border);
+            border-top: 3px solid var(--rd-accent); transition: transform 0.15s ease;
         }
+        div[data-testid="stMetric"]:hover {transform: translateY(-2px);}
 
         /* Any bordered st.container - the one legal way to draw a real card,
            since Streamlit can't nest HTML written across separate calls. */
         div[data-testid="stVerticalBlockBorderWrapper"] {
             border-radius: 16px !important; border: 1px solid var(--rd-border) !important;
             box-shadow: var(--rd-shadow); background: var(--rd-card);
+            transition: box-shadow 0.15s ease;
         }
 
         /* Buttons: one consistent pill style, accent on primary/submit. */
@@ -424,13 +435,22 @@ def inject_style() -> None:
         div[data-baseweb="tab-highlight"] {display: none;}
         div[data-baseweb="tab-border"] {display: none;}
 
-        /* Chat bubbles: rounded cards with a soft shadow, distinct per role. */
+        /* Chat bubbles: rounded cards with a soft shadow, right-aligned for
+           the user (like a messaging app) and left-aligned for Genie. */
         div[data-testid="stChatMessage"] {
-            border-radius: 14px; padding: 0.6rem 0.9rem; margin-bottom: 0.5rem;
+            border-radius: 16px; padding: 0.6rem 0.9rem; margin-bottom: 0.6rem;
             box-shadow: var(--rd-shadow); border: 1px solid var(--rd-border);
+            max-width: 78%;
         }
         div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarUser"]) {
-            background: #eef2ff;
+            background: var(--rd-accent); color: #fff; margin-left: auto;
+            flex-direction: row-reverse; border: none;
+        }
+        div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarUser"]) p {
+            color: #fff;
+        }
+        div[data-testid="stChatMessage"]:has(div[data-testid="stChatMessageAvatarAssistant"]) {
+            margin-right: auto;
         }
 
         div[data-testid="stTextInput"] input, div[data-testid="stSelectbox"] > div {
@@ -861,7 +881,11 @@ def main() -> None:
     reviewer = reviewer_identity()
     reviewer_label = reviewer_display_name(reviewer)
 
-    st.title("Research discovery")
+    st.markdown(
+        '<div class="rd-hero"><h1>Research discovery</h1>'
+        "<p>A governed research agent over a human-reviewed claims corpus.</p></div>",
+        unsafe_allow_html=True,
+    )
 
     tab_genie, tab_review = st.tabs(["Ask Genie", "Review workstation"])
     with tab_genie:
