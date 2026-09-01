@@ -41,7 +41,7 @@ def process_source(
         FetchError: The fetch failed or was refused by policy.
         ParserError: No usable parser, or the document had no extractable text.
     """
-    version = source_ops.fetch_version(
+    version, raw = source_ops.fetch_version(
         source, fetcher, previous=previous_version, volume_path=config.volume_path
     )
     if version is None:
@@ -51,7 +51,6 @@ def process_source(
 
     content_type = version.content_type or "application/octet-stream"
     parser, fallback_warning = resolve_with_fallback(config.parser, content_type)
-    raw = fetcher.get(source.canonical_url).content
     document = parser.parse(raw, source_uri=source.canonical_url, content_type=content_type)
     if document.is_empty:
         raise ParserError(f"parser produced no text for {source.canonical_url}")

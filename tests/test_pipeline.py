@@ -157,9 +157,11 @@ class StubTransport:
     def __init__(self, content=b"hello", status=200, etag=None):
         self.content, self.status, self.etag = content, status, etag
         self.calls = 0
+        self.urls: list[str] = []
 
     def get(self, url, *, etag=None):
         self.calls += 1
+        self.urls.append(url)
         return FetchResult(self.content, "text/html", self.status, self.etag)
 
 
@@ -200,26 +202,38 @@ class TestIngestionPolicy(unittest.TestCase):
             "https://arxiv.org/abs/1", source_type=SourceType.PRIMARY_PAPER, licence="MIT"
         )
         transport = StubTransport(content=b"same bytes")
-        first = fetch_version(source, transport)
+        first, _ = fetch_version(source, transport)
         self.assertIsNotNone(first)
-        second = fetch_version(source, transport, previous=first)
+        second, content = fetch_version(source, transport, previous=first)
         self.assertIsNone(second)
+        self.assertIsNone(content)
 
     def test_changed_content_increments_the_version(self):
         source = register_source(
             "https://arxiv.org/abs/1", source_type=SourceType.PRIMARY_PAPER, licence="MIT"
         )
-        first = fetch_version(source, StubTransport(content=b"v1"))
-        second = fetch_version(source, StubTransport(content=b"v2"), previous=first)
+        first, _ = fetch_version(source, StubTransport(content=b"v1"))
+        second, content = fetch_version(source, StubTransport(content=b"v2"), previous=first)
         self.assertEqual(second.version_number, 2)
         self.assertNotEqual(first.source_version_id, second.source_version_id)
+        self.assertEqual(content, b"v2")
 
     def test_304_means_unchanged(self):
         source = register_source(
             "https://arxiv.org/abs/1", source_type=SourceType.PRIMARY_PAPER, licence="MIT"
         )
         previous = SourceVersion(source_id=source.source_id, content_hash="0" * 64, etag="W/x")
-        self.assertIsNone(fetch_version(source, StubTransport(status=304), previous=previous))
+        version, content = fetch_version(source, StubTransport(status=304), previous=previous)
+        self.assertIsNone(version)
+        self.assertIsNone(content)
+
+    def test_arxiv_abstract_url_is_fetched_as_pdf(self):
+        source = register_source(
+            "https://arxiv.org/abs/2404.16130", source_type=SourceType.PRIMARY_PAPER, licence="MIT"
+        )
+        transport = StubTransport(content=b"%PDF-1.4 fake pdf bytes")
+        fetch_version(source, transport)
+        self.assertEqual(transport.urls, ["https://arxiv.org/pdf/2404.16130"])
 
     def test_metadata_only_source_is_not_storage_permitted(self):
         source = register_source(

@@ -70,7 +70,9 @@ class TestEndToEnd(unittest.TestCase):
         source, version, _ = self._ingest()
         from research_discovery.ingest.sources import fetch_version
 
-        self.assertIsNone(fetch_version(source, self.fetcher, previous=version))
+        unchanged_version, unchanged_content = fetch_version(source, self.fetcher, previous=version)
+        self.assertIsNone(unchanged_version)
+        self.assertIsNone(unchanged_content)
 
     def test_extracted_claims_start_unreviewed_and_are_queued(self):
         source, _, chunks = self._ingest()

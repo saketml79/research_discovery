@@ -129,6 +129,25 @@ def licence_permits_storage(licence: str | None) -> bool:
     return bool(licence) and licence.strip().upper() in STORAGE_PERMITTED_LICENCES
 
 
+def resolve_fetch_url(canonical_url: str) -> str:
+    """The URL to actually download bytes from, when it differs from the
+    citation URL a human would follow.
+
+    An arXiv "/abs/<id>" page is the citation landing page - fetching it
+    returns an HTML abstract, not the paper, and every downstream parser then
+    silently falls back to parsing that HTML instead of the real PDF. Its
+    "/pdf/<id>" sibling returns the actual paper. Every other host's
+    canonical_url already is the fetchable document (a repo page, a docs
+    page), so it is returned unchanged.
+    """
+    parsed = urlparse(canonical_url)
+    host = (parsed.hostname or "").lower()
+    if host in {"arxiv.org", "www.arxiv.org"} and parsed.path.startswith("/abs/"):
+        arxiv_id = parsed.path[len("/abs/"):]
+        return f"{parsed.scheme}://{parsed.netloc}/pdf/{arxiv_id}"
+    return canonical_url
+
+
 def register_source(
     canonical_url: str,
     *,
@@ -183,7 +202,7 @@ def fetch_version(
     *,
     previous: SourceVersion | None = None,
     volume_path: str | None = None,
-) -> SourceVersion | None:
+) -> tuple[SourceVersion | None, bytes | None]:
     """Fetch a source and build its version record.
 
     Args:
@@ -195,29 +214,33 @@ def fetch_version(
             permits it.
 
     Returns:
-        A new ``SourceVersion``, or ``None`` when the content is unchanged.
+        A ``(version, content)`` pair. ``version`` is ``None`` when the content
+        is unchanged (304, or an identical hash), in which case ``content`` is
+        also ``None`` since nothing downstream needs it. Callers must not
+        re-fetch the URL themselves - one source, one fetch.
 
     Raises:
         FetchError: The fetch failed or was refused by policy.
     """
-    result = fetcher.get(source.canonical_url, etag=previous.etag if previous else None)
+    fetch_url = resolve_fetch_url(source.canonical_url)
+    result = fetcher.get(fetch_url, etag=previous.etag if previous else None)
 
     if result.http_status == 304:
         logger.info("source %s unchanged (304)", source.canonical_url)
-        return None
+        return None, None
     if result.http_status >= 400:
-        raise FetchError(f"HTTP {result.http_status} fetching {source.canonical_url}")
+        raise FetchError(f"HTTP {result.http_status} fetching {fetch_url}")
 
     content_hash = sha256_hex(result.content)
     if previous is not None and previous.content_hash == content_hash:
         logger.info("source %s unchanged (identical hash)", source.canonical_url)
-        return None
+        return None, None
 
     raw_uri = None
     if source.storage_permitted and volume_path:
         raw_uri = f"{volume_path}/{source.source_id}/{content_hash[:16]}"
 
-    return SourceVersion(
+    version = SourceVersion(
         source_id=source.source_id,
         content_hash=content_hash,
         version_number=(previous.version_number + 1) if previous else 1,
@@ -229,6 +252,7 @@ def fetch_version(
         retrieved_at=utcnow(),
         is_current=True,
     )
+    return version, result.content
 
 
 def supersede_versions(versions: Sequence[SourceVersion], current_id: str) -> Iterator[SourceVersion]:
