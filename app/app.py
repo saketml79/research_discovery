@@ -765,88 +765,150 @@ def render_genie_panel() -> None:
     inflight = st.session_state.get("genie_inflight_question")
     busy = inflight is not None
 
-    with st.container(border=True):
-        if not history:
-            st.caption("Try asking:")
-            cols = st.columns(2)
-            for index, sample in enumerate(SAMPLE_QUESTIONS):
-                if cols[index % 2].button(
-                    sample, key=f"sample:{sample}", use_container_width=True, disabled=busy
-                ):
-                    pending = sample
-        else:
-            for turn in history:
-                with st.chat_message(turn["role"]):
-                    st.markdown(turn["content"])
-                    if turn.get("rows"):
-                        st.dataframe(
-                            turn["rows"], use_container_width=True, hide_index=True,
-                            column_config=None,
-                        )
-                    if turn.get("queries"):
-                        with st.expander("SQL Genie ran"):
-                            for query in turn["queries"]:
-                                st.code(query, language="sql")
+    # Layout: left column for chat, right column for sources
+    main_col, source_col = st.columns([3, 1])
 
-        with st.form("genie_ask_form", clear_on_submit=True, border=False):
-            input_cols = st.columns([5, 1])
-            question = input_cols[0].text_input(
-                "Ask a question", label_visibility="collapsed",
-                placeholder="Ask a question about the reviewed corpus", disabled=busy,
-            )
-            asked = input_cols[1].form_submit_button("Ask", use_container_width=True, disabled=busy)
-
-        # Two-phase ask: first rerun shows the question + a disabled/busy UI,
-        # the *next* run does the actual (slow) Genie call and appends the
-        # answer - a single-pass "set busy then immediately clear it" never
-        # reaches the browser, since Streamlit only repaints between reruns.
-        if not busy and (pending or (asked and question)):
-            question = pending or question
-            history.append({"role": "user", "content": question})
-            st.session_state["genie_inflight_question"] = question
-            st.rerun()
-
-        if busy:
-            with st.chat_message("assistant"):
-                with st.spinner("Genie is thinking..."):
-                    try:
-                        turn = client.ask(
-                            inflight, conversation_id=st.session_state.get("genie_conversation_id")
-                        )
-                    except Exception as exc:  # noqa: BLE001 - never crash the page over one turn
-                        logger.exception("genie ask failed")
-                        entry: dict[str, Any] = {
-                            "role": "assistant",
-                            "content": f"Genie could not answer: {exc}",
-                        }
-                    else:
-                        if turn.conversation_id:
-                            st.session_state["genie_conversation_id"] = turn.conversation_id
-                        answer = (
-                            f"Genie could not answer: {turn.error}"
-                            if turn.error
-                            else (turn.text or "(no answer text returned)")
-                        )
-                        entry = {"role": "assistant", "content": answer}
-                        if not turn.error and turn.rows:
-                            entry["rows"] = (
-                                [dict(zip(turn.columns, row)) for row in turn.rows]
-                                if turn.columns
-                                else turn.rows
+    with main_col:
+        with st.container(border=True):
+            if not history:
+                st.caption("Try asking:")
+                cols = st.columns(2)
+                for index, sample in enumerate(SAMPLE_QUESTIONS):
+                    if cols[index % 2].button(
+                        sample, key=f"sample:{sample}", use_container_width=True, disabled=busy
+                    ):
+                        pending = sample
+            else:
+                for turn in history:
+                    with st.chat_message(turn["role"]):
+                        st.markdown(turn["content"])
+                        if turn.get("rows"):
+                            st.dataframe(
+                                turn["rows"], use_container_width=True, hide_index=True,
+                                column_config=None,
                             )
-                        if not turn.error and turn.queries:
-                            entry["queries"] = turn.queries
-            history.append(entry)
-            st.session_state.pop("genie_inflight_question", None)
-            st.rerun()
+                        if turn.get("queries"):
+                            with st.expander("SQL Genie ran"):
+                                for query in turn["queries"]:
+                                    st.code(query, language="sql")
 
-    cols = st.columns([1, 5])
-    if history and cols[0].button("New conversation", disabled=busy):
-        st.session_state["genie_history"] = []
-        st.session_state.pop("genie_conversation_id", None)
-        st.rerun()
-    if url:
-        cols[1].link_button("Open in full Genie UI", url)
+            with st.form("genie_ask_form", clear_on_submit=True, border=False):
+                input_cols = st.columns([5, 1])
+                question = input_cols[0].text_input(
+                    "Ask a question", label_visibility="collapsed",
+                    placeholder="Ask a question about the reviewed corpus", disabled=busy,
+                )
+                asked = input_cols[1].form_submit_button("Ask", use_container_width=True, disabled=busy)
+
+            # Two-phase ask: first rerun shows the question + a disabled/busy UI,
+            # the *next* run does the actual (slow) Genie call and appends the
+            # answer - a single-pass "set busy then immediately clear it" never
+            # reaches the browser, since Streamlit only repaints between reruns.
+            if not busy and (pending or (asked and question)):
+                question = pending or question
+                history.append({"role": "user", "content": question})
+                st.session_state["genie_inflight_question"] = question
+                st.rerun()
+
+            if busy:
+                with st.chat_message("assistant"):
+                    with st.spinner("Genie is thinking..."):
+                        try:
+                            turn = client.ask(
+                                inflight, conversation_id=st.session_state.get("genie_conversation_id")
+                            )
+                        except Exception as exc:  # noqa: BLE001 - never crash the page over one turn
+                            logger.exception("genie ask failed")
+                            entry: dict[str, Any] = {
+                                "role": "assistant",
+                                "content": f"Genie could not answer: {exc}",
+                                "sources": [],
+                            }
+                        else:
+                            if turn.conversation_id:
+                                st.session_state["genie_conversation_id"] = turn.conversation_id
+                            answer = (
+                                f"Genie could not answer: {turn.error}"
+                                if turn.error
+                                else (turn.text or "(no answer text returned)")
+                            )
+                            entry = {"role": "assistant", "content": answer}
+                            if not turn.error and turn.rows:
+                                entry["rows"] = (
+                                    [dict(zip(turn.columns, row)) for row in turn.rows]
+                                    if turn.columns
+                                    else turn.rows
+                                )
+                            if not turn.error and turn.queries:
+                                entry["queries"] = turn.queries
+                            if not turn.error and turn.sources:
+                                entry["sources"] = turn.sources
+                        history.append(entry)
+                st.session_state.pop("genie_inflight_question", None)
+                st.rerun()
+
+        cols = st.columns([1, 5])
+        if history and cols[0].button("New conversation", disabled=busy):
+            st.session_state["genie_history"] = []
+            st.session_state.pop("genie_conversation_id", None)
+            st.rerun()
+        if url:
+            cols[1].link_button("Open in full Genie UI", url)
+
+    # Right panel: show all sources referenced in the current answer
+    with source_col:
+        st.subheader("📚 Sources")
+        if history:
+            # Get the most recent assistant message
+            latest_answer = None
+            for turn in reversed(history):
+                if turn["role"] == "assistant" and turn.get("sources"):
+                    latest_answer = turn
+                    break
+            
+            if latest_answer and latest_answer.get("sources"):
+                st.caption(f"{len(latest_answer['sources'])} sources cited")
+                for source in latest_answer["sources"]:
+                    with st.container(border=True):
+                        url = source.get("source_url", "")
+                        title = source.get("source_title", "Untitled")
+                        stype = source.get("source_type", "")
+                        
+                        # Render title
+                        st.markdown(f"**{title}**" if title else "**Source**")
+                        
+                        # Render type badge if available
+                        if stype:
+                            st.caption(f"📄 {stype}")
+                        
+                        # Render buttons to view source
+                        btn_cols = st.columns(2)
+                        if url:
+                            if "arxiv.org" in url.lower():
+                                # For arXiv, offer PDF link
+                                pdf_url = url.replace("/abs/", "/pdf/") if "/abs/" in url else url
+                                if btn_cols[0].button(
+                                    "📑 PDF", key=f"pdf:{url}", use_container_width=True,
+                                    help="Open the PDF on arXiv"
+                                ):
+                                    st.session_state[f"modal_url:{url}"] = pdf_url
+                            else:
+                                if btn_cols[0].button(
+                                    "🔗 View", key=f"view:{url}", use_container_width=True,
+                                    help="Open in original source"
+                                ):
+                                    st.session_state[f"modal_url:{url}"] = url
+                            
+                            if btn_cols[1].button(
+                                "🌐 Original", key=f"orig:{url}", use_container_width=True,
+                                help="Open original page"
+                            ):
+                                # Open in new tab using markdown link
+                                st.markdown(f"[Open in browser]({url})")
+            else:
+                st.caption("No sources referenced in this answer yet.")
+        else:
+            st.caption("Ask a question to see referenced sources here.")
 
 
 def render_review_workstation(config: Config, reviewer: str, reviewer_label: str) -> None:

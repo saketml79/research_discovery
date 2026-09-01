@@ -56,6 +56,8 @@ class AgentTurn:
             generated SQL and any tool attachments.
         rows: Result rows returned to the agent, per attachment.
         columns: Column names for ``rows``, when the query result exposed a schema.
+        sources: Unique sources (PDFs, papers) referenced in the query results,
+            extracted from source_url and source_title columns.
         state: Terminal conversation state.
         conversation_id: For follow-up turns.
         message_id: The message this turn corresponds to.
@@ -68,6 +70,7 @@ class AgentTurn:
     tools_called: list[str] = field(default_factory=list)
     rows: list[list[Any]] = field(default_factory=list)
     columns: list[str] = field(default_factory=list)
+    sources: list[dict[str, Any]] = field(default_factory=list)
     state: str = "UNKNOWN"
     conversation_id: str = ""
     message_id: str = ""
@@ -225,6 +228,7 @@ class GenieAgentClient:
         )
 
         texts: list[str] = []
+        seen_sources: dict[str, dict[str, Any]] = {}  # Track unique sources by URL
         for attachment in message.get("attachments") or []:
             text_part = attachment.get("text") or {}
             if text_part.get("content"):
@@ -241,6 +245,8 @@ class GenieAgentClient:
                     turn.rows.extend(rows)
                     if columns and not turn.columns:
                         turn.columns = columns
+                    # Extract unique sources from rows
+                    self._extract_sources(rows, columns, seen_sources)
 
             tool_part = attachment.get("tool_call") or attachment.get("tool") or {}
             if tool_part.get("name"):
@@ -250,6 +256,7 @@ class GenieAgentClient:
             texts.append(str(message["content"]))
         turn.text = "\n\n".join(texts).strip()
         turn.tools_called = sorted(set(turn.tools_called))
+        turn.sources = list(seen_sources.values())
         return turn
 
     def _fetch_rows(
@@ -269,6 +276,36 @@ class GenieAgentClient:
         columns = [str(c.get("name")) for c in (schema.get("columns") or []) if c.get("name")]
         rows = [list(row) for row in (data.get("data_array") or [])]
         return columns, rows
+
+    def _extract_sources(
+        self, rows: list[list[Any]], columns: list[str], seen_sources: dict[str, dict[str, Any]]
+    ) -> None:
+        """Extract unique sources from query result rows. Populates seen_sources dict."""
+        if not columns or not rows:
+            return
+        # Try to find source_url and source_title columns
+        url_idx = None
+        title_idx = None
+        type_idx = None
+        for i, col in enumerate(columns):
+            if col.lower() == "source_url":
+                url_idx = i
+            elif col.lower() == "source_title":
+                title_idx = i
+            elif col.lower() == "source_type":
+                type_idx = i
+        if url_idx is None:
+            return  # No source_url column found
+        for row in rows:
+            if url_idx < len(row) and row[url_idx]:
+                source_url = str(row[url_idx])
+                if source_url and source_url not in seen_sources:
+                    source_entry = {"source_url": source_url}
+                    if title_idx is not None and title_idx < len(row):
+                        source_entry["source_title"] = str(row[title_idx])
+                    if type_idx is not None and type_idx < len(row):
+                        source_entry["source_type"] = str(row[type_idx])
+                    seen_sources[source_url] = source_entry
 
 
 #: UC functions the agent may call. Used to read a tool trace out of generated SQL.
